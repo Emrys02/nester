@@ -1,11 +1,12 @@
 import { Navbar } from "@/components/navbar";
 import { Hero } from "@/components/hero";
 import { ImageCarousel } from "@/components/image-carousel";
-// import { FeaturesFloat } from "@/components/features-float";
 import { Ecosystem } from "@/components/ecosystem";
 import { AiLayer } from "@/components/ai-layer";
-// import { Architecture } from "@/components/architecture";
 import { HowItWorks } from "@/components/how-it-works";
+import { Faq } from "@/components/faq";
+// import { FeaturesFloat } from "@/components/features-float";
+// import { Architecture } from "@/components/architecture";
 
 export default function Home() {
   return (
@@ -22,6 +23,7 @@ export default function Home() {
       <Ecosystem />
       <AiLayer />
       <HowItWorks />
+      <Faq />
       {/* <Architecture /> */}
       {/* <FeaturesFloat /> */}
     </main>

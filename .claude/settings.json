@@ -9,7 +9,8 @@
       "Bash(gh api orgs/Suncrest-Labs/repos --jq '.[].name')",
       "Bash(pnpm --version)",
       "Bash(gh api repos/Suncrest-Labs/nester-dapp/contents --jq '.[].name')",
-      "Bash(gh api repos/Suncrest-Labs/nester_intelligence/contents --jq '.[].name')"
+      "Bash(gh api repos/Suncrest-Labs/nester_intelligence/contents --jq '.[].name')",
+      "Bash(taskkill //F //IM node.exe)"
     ]
   }
 }
