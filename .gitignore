@@ -25,6 +25,7 @@ coverage/
 .DS_Store
 *.pem
 Thumbs.db
+CLAUDE.md
 
 # Debug logs
 npm-debug.log*
