@@ -15,7 +15,7 @@ const navLinks = [
     { name: "Resources", href: "#resources" },
     { name: "Developers", href: "#developers" },
     { name: "About", href: "#about" },
-    {name: "Docs", href: "#docs" },
+    {name: "Docs", href: "/docs" },
 ]
 
 export function Navbar() {
