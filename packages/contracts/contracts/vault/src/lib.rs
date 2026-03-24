@@ -41,8 +41,7 @@ impl VaultContract {
         caller.require_auth();
         ac::require_role(&env, &caller, Role::Admin);
         env.storage().instance().set(&DataKey::Paused, &true);
-        env.events()
-            .publish((symbol_short!("paused"), caller), ());
+        env.events().publish((symbol_short!("paused"), caller), ());
     }
 
     /// Resume vault operations. Requires [`Role::Admin`].

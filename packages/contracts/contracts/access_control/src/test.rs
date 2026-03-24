@@ -13,15 +13,10 @@
 
 extern crate std;
 
-use soroban_sdk::{
-    contract, contractimpl,
-    testutils::Address as _,
-    Address, Env,
-};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env};
 
 use crate::{
-    accept_admin, grant_role, has_role, initialize, require_role, revoke_role, transfer_admin,
-    Role,
+    accept_admin, grant_role, has_role, initialize, require_role, revoke_role, transfer_admin, Role,
 };
 
 // ---------------------------------------------------------------------------
@@ -98,7 +93,11 @@ fn has_role_returns_false_for_uninitialised_address() {
     let cid = env.register_contract(None, TestAC);
     let stranger = Address::generate(&env);
     assert!(!read(&env, &cid, || has_role(&env, &stranger, Role::Admin)));
-    assert!(!read(&env, &cid, || has_role(&env, &stranger, Role::Operator)));
+    assert!(!read(&env, &cid, || has_role(
+        &env,
+        &stranger,
+        Role::Operator
+    )));
 }
 
 // ---------------------------------------------------------------------------
@@ -108,22 +107,36 @@ fn has_role_returns_false_for_uninitialised_address() {
 #[test]
 fn admin_can_grant_operator_role() {
     let (env, admin, operator, cid) = setup();
-    invoke(&env, &cid, || grant_role(&env, &admin, &operator, Role::Operator));
-    assert!(read(&env, &cid, || has_role(&env, &operator, Role::Operator)));
+    invoke(&env, &cid, || {
+        grant_role(&env, &admin, &operator, Role::Operator)
+    });
+    assert!(read(&env, &cid, || has_role(
+        &env,
+        &operator,
+        Role::Operator
+    )));
 }
 
 #[test]
 fn granting_operator_does_not_also_grant_admin() {
     let (env, admin, operator, cid) = setup();
-    invoke(&env, &cid, || grant_role(&env, &admin, &operator, Role::Operator));
+    invoke(&env, &cid, || {
+        grant_role(&env, &admin, &operator, Role::Operator)
+    });
     assert!(!read(&env, &cid, || has_role(&env, &operator, Role::Admin)));
 }
 
 #[test]
 fn admin_can_grant_admin_role_to_another() {
     let (env, admin, second_admin, cid) = setup();
-    invoke(&env, &cid, || grant_role(&env, &admin, &second_admin, Role::Admin));
-    assert!(read(&env, &cid, || has_role(&env, &second_admin, Role::Admin)));
+    invoke(&env, &cid, || {
+        grant_role(&env, &admin, &second_admin, Role::Admin)
+    });
+    assert!(read(&env, &cid, || has_role(
+        &env,
+        &second_admin,
+        Role::Admin
+    )));
 }
 
 #[test]
@@ -131,9 +144,13 @@ fn admin_can_grant_admin_role_to_another() {
 fn non_admin_cannot_grant_role() {
     let (env, admin, operator, cid) = setup();
     let outsider = Address::generate(&env);
-    invoke(&env, &cid, || grant_role(&env, &admin, &operator, Role::Operator));
+    invoke(&env, &cid, || {
+        grant_role(&env, &admin, &operator, Role::Operator)
+    });
     // Operator tries to grant roles — must panic (Unauthorized from require_role).
-    invoke(&env, &cid, || grant_role(&env, &operator, &outsider, Role::Operator));
+    invoke(&env, &cid, || {
+        grant_role(&env, &operator, &outsider, Role::Operator)
+    });
 }
 
 #[test]
@@ -142,16 +159,26 @@ fn stranger_cannot_grant_role() {
     let (env, _, _, cid) = setup();
     let stranger = Address::generate(&env);
     let target = Address::generate(&env);
-    invoke(&env, &cid, || grant_role(&env, &stranger, &target, Role::Operator));
+    invoke(&env, &cid, || {
+        grant_role(&env, &stranger, &target, Role::Operator)
+    });
 }
 
 #[test]
 fn regranting_existing_role_is_idempotent() {
     let (env, admin, operator, cid) = setup();
-    invoke(&env, &cid, || grant_role(&env, &admin, &operator, Role::Operator));
+    invoke(&env, &cid, || {
+        grant_role(&env, &admin, &operator, Role::Operator)
+    });
     // Second grant must not panic.
-    invoke(&env, &cid, || grant_role(&env, &admin, &operator, Role::Operator));
-    assert!(read(&env, &cid, || has_role(&env, &operator, Role::Operator)));
+    invoke(&env, &cid, || {
+        grant_role(&env, &admin, &operator, Role::Operator)
+    });
+    assert!(read(&env, &cid, || has_role(
+        &env,
+        &operator,
+        Role::Operator
+    )));
 }
 
 // ---------------------------------------------------------------------------
@@ -161,29 +188,53 @@ fn regranting_existing_role_is_idempotent() {
 #[test]
 fn admin_can_revoke_operator_role() {
     let (env, admin, operator, cid) = setup();
-    invoke(&env, &cid, || grant_role(&env, &admin, &operator, Role::Operator));
-    assert!(read(&env, &cid, || has_role(&env, &operator, Role::Operator)));
+    invoke(&env, &cid, || {
+        grant_role(&env, &admin, &operator, Role::Operator)
+    });
+    assert!(read(&env, &cid, || has_role(
+        &env,
+        &operator,
+        Role::Operator
+    )));
 
     // Separate frame so admin.require_auth() is fresh.
-    invoke(&env, &cid, || revoke_role(&env, &admin, &operator, Role::Operator));
-    assert!(!read(&env, &cid, || has_role(&env, &operator, Role::Operator)));
+    invoke(&env, &cid, || {
+        revoke_role(&env, &admin, &operator, Role::Operator)
+    });
+    assert!(!read(&env, &cid, || has_role(
+        &env,
+        &operator,
+        Role::Operator
+    )));
 }
 
 #[test]
 #[should_panic]
 fn non_admin_cannot_revoke_role() {
     let (env, admin, operator, cid) = setup();
-    invoke(&env, &cid, || grant_role(&env, &admin, &operator, Role::Operator));
-    invoke(&env, &cid, || revoke_role(&env, &operator, &admin, Role::Admin));
+    invoke(&env, &cid, || {
+        grant_role(&env, &admin, &operator, Role::Operator)
+    });
+    invoke(&env, &cid, || {
+        revoke_role(&env, &operator, &admin, Role::Admin)
+    });
 }
 
 #[test]
 fn admin_can_revoke_another_admin_when_multiple_admins_exist() {
     let (env, admin, second_admin, cid) = setup();
-    invoke(&env, &cid, || grant_role(&env, &admin, &second_admin, Role::Admin));
+    invoke(&env, &cid, || {
+        grant_role(&env, &admin, &second_admin, Role::Admin)
+    });
 
-    invoke(&env, &cid, || revoke_role(&env, &admin, &second_admin, Role::Admin));
-    assert!(!read(&env, &cid, || has_role(&env, &second_admin, Role::Admin)));
+    invoke(&env, &cid, || {
+        revoke_role(&env, &admin, &second_admin, Role::Admin)
+    });
+    assert!(!read(&env, &cid, || has_role(
+        &env,
+        &second_admin,
+        Role::Admin
+    )));
     assert!(read(&env, &cid, || has_role(&env, &admin, Role::Admin)));
 }
 
@@ -191,7 +242,9 @@ fn admin_can_revoke_another_admin_when_multiple_admins_exist() {
 #[should_panic]
 fn revoking_last_admin_panics() {
     let (env, admin, _, cid) = setup();
-    invoke(&env, &cid, || revoke_role(&env, &admin, &admin, Role::Admin));
+    invoke(&env, &cid, || {
+        revoke_role(&env, &admin, &admin, Role::Admin)
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +254,9 @@ fn revoking_last_admin_panics() {
 #[test]
 fn require_role_passes_for_authorised_account() {
     let (env, admin, operator, cid) = setup();
-    invoke(&env, &cid, || grant_role(&env, &admin, &operator, Role::Operator));
+    invoke(&env, &cid, || {
+        grant_role(&env, &admin, &operator, Role::Operator)
+    });
     // require_role is read-only — no require_auth — safe in same frame.
     read(&env, &cid, || {
         require_role(&env, &admin, Role::Admin);
@@ -220,7 +275,9 @@ fn require_role_panics_when_account_lacks_role() {
 #[should_panic]
 fn require_admin_panics_for_operator() {
     let (env, admin, operator, cid) = setup();
-    invoke(&env, &cid, || grant_role(&env, &admin, &operator, Role::Operator));
+    invoke(&env, &cid, || {
+        grant_role(&env, &admin, &operator, Role::Operator)
+    });
     read(&env, &cid, || require_role(&env, &operator, Role::Admin));
 }
 
@@ -238,7 +295,11 @@ fn transfer_admin_two_step_happy_path() {
 
     // After proposal: old admin still holds Admin, new one does not.
     assert!(read(&env, &cid, || has_role(&env, &admin, Role::Admin)));
-    assert!(!read(&env, &cid, || has_role(&env, &new_admin, Role::Admin)));
+    assert!(!read(&env, &cid, || has_role(
+        &env,
+        &new_admin,
+        Role::Admin
+    )));
 
     // Step 2: new admin accepts (different auth subject from step 1).
     invoke(&env, &cid, || accept_admin(&env, &new_admin));
@@ -289,7 +350,9 @@ fn admin_count_is_consistent_after_full_transfer() {
     assert!(!read(&env, &cid, || has_role(&env, &admin, Role::Admin)));
 
     // Revoke third (2 admins → 1, safe).
-    invoke(&env, &cid, || revoke_role(&env, &new_admin, &third, Role::Admin));
+    invoke(&env, &cid, || {
+        revoke_role(&env, &new_admin, &third, Role::Admin)
+    });
     assert!(!read(&env, &cid, || has_role(&env, &third, Role::Admin)));
 }
 
@@ -302,14 +365,22 @@ fn admin_count_is_consistent_after_full_transfer() {
 fn operator_cannot_grant_roles() {
     let (env, admin, operator, cid) = setup();
     let target = Address::generate(&env);
-    invoke(&env, &cid, || grant_role(&env, &admin, &operator, Role::Operator));
-    invoke(&env, &cid, || grant_role(&env, &operator, &target, Role::Operator));
+    invoke(&env, &cid, || {
+        grant_role(&env, &admin, &operator, Role::Operator)
+    });
+    invoke(&env, &cid, || {
+        grant_role(&env, &operator, &target, Role::Operator)
+    });
 }
 
 #[test]
 #[should_panic]
 fn operator_cannot_revoke_roles() {
     let (env, admin, operator, cid) = setup();
-    invoke(&env, &cid, || grant_role(&env, &admin, &operator, Role::Operator));
-    invoke(&env, &cid, || revoke_role(&env, &operator, &admin, Role::Admin));
+    invoke(&env, &cid, || {
+        grant_role(&env, &admin, &operator, Role::Operator)
+    });
+    invoke(&env, &cid, || {
+        revoke_role(&env, &operator, &admin, Role::Admin)
+    });
 }

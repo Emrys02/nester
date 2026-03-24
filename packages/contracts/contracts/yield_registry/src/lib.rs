@@ -57,9 +57,7 @@ impl YieldRegistryContract {
 
     /// Return `true` if the source has ever been registered (regardless of status).
     pub fn has_source(env: Env, source_id: Symbol) -> bool {
-        env.storage()
-            .instance()
-            .has(&DataKey::Source(source_id))
+        env.storage().instance().has(&DataKey::Source(source_id))
     }
 
     /// Return the current [`SourceStatus`] for `source_id`.

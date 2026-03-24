@@ -1,8 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Symbol,
-    Vec,
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Symbol, Vec,
 };
 
 use nester_access_control::{self as ac, Role};
@@ -76,11 +75,7 @@ impl AllocationStrategyContract {
         }
 
         // Validate each source against the registry.
-        let registry_id: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::RegistryId)
-            .unwrap();
+        let registry_id: Address = env.storage().instance().get(&DataKey::RegistryId).unwrap();
         let registry = YieldRegistryContractClient::new(&env, &registry_id);
 
         for w in weights.iter() {
@@ -93,8 +88,7 @@ impl AllocationStrategyContract {
         }
 
         env.storage().instance().set(&DataKey::Weights, &weights);
-        env.events()
-            .publish((symbol_short!("wts_set"), caller), ());
+        env.events().publish((symbol_short!("wts_set"), caller), ());
     }
 
     /// Return the currently stored allocation weights.

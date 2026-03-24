@@ -59,10 +59,16 @@ fn upsert_source_overwrites_status() {
 
     client.initialize(&admin);
     client.upsert_source(&admin, &symbol_short!("aave"), &SourceStatus::Active);
-    assert_eq!(client.get_source_status(&symbol_short!("aave")), SourceStatus::Active);
+    assert_eq!(
+        client.get_source_status(&symbol_short!("aave")),
+        SourceStatus::Active
+    );
 
     client.upsert_source(&admin, &symbol_short!("aave"), &SourceStatus::Paused);
-    assert_eq!(client.get_source_status(&symbol_short!("aave")), SourceStatus::Paused);
+    assert_eq!(
+        client.get_source_status(&symbol_short!("aave")),
+        SourceStatus::Paused
+    );
 }
 
 #[test]

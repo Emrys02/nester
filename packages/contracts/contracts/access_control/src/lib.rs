@@ -96,14 +96,10 @@ pub fn initialize(env: &Env, admin: &Address) {
     admin.require_auth();
 
     internal_set_role(env, admin, Role::Admin, true);
-    env.storage()
-        .instance()
-        .set(&DataKey::AdminCount, &1u32);
+    env.storage().instance().set(&DataKey::AdminCount, &1u32);
 
-    env.events().publish(
-        (symbol_short!("ac_init"), admin.clone()),
-        Role::Admin,
-    );
+    env.events()
+        .publish((symbol_short!("ac_init"), admin.clone()), Role::Admin);
 }
 
 /// Returns `true` if `account` currently holds `role`, `false` otherwise.
