@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"strings"
 	"testing"
 	"time"
@@ -190,6 +191,164 @@ func TestLoadEnvVarsTakePrecedenceOverDotEnv(t *testing.T) {
 	}
 	if cfg.Stellar().NetworkPassphrase() != "From EnvVar" {
 		t.Fatalf("expected stellar passphrase from env var, got %q", cfg.Stellar().NetworkPassphrase())
+	}
+}
+
+// TestLoadConcurrentCalls verifies repeated concurrent Load calls remain stable
+// and return consistent values.
+func TestLoadConcurrentCalls(t *testing.T) {
+	baseEnv(t)
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".env"), strings.Join([]string{
+		"APP_ENV=staging",
+		"SERVER_PORT=8088",
+		"DATABASE_DSN=postgres://postgres:postgres@localhost:5432/nester?sslmode=disable",
+		"STELLAR_NETWORK_PASSPHRASE=Concurrent Network",
+		"STELLAR_RPC_URL=https://rpc.example.com",
+		"STELLAR_HORIZON_URL=https://horizon.example.com",
+	}, "\n"))
+	chdir(t, dir)
+
+	const goroutines = 32
+
+	errCh := make(chan error, goroutines)
+	var wg sync.WaitGroup
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			cfg, err := Load()
+			if err != nil {
+				errCh <- err
+				return
+			}
+
+			if cfg.Environment() != "staging" {
+				errCh <- &testErr{message: "unexpected environment"}
+				return
+			}
+			if cfg.Server().Port() != 8088 {
+				errCh <- &testErr{message: "unexpected server port"}
+				return
+			}
+			if cfg.Stellar().NetworkPassphrase() != "Concurrent Network" {
+				errCh <- &testErr{message: "unexpected stellar passphrase"}
+				return
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Fatalf("concurrent Load() failed: %v", err)
+	}
+}
+
+// TestLoadProcessEnvOverridesDotEnvAndFallsBack verifies that process env
+// values win when set, while unset keys continue to fall back to .env values.
+func TestLoadProcessEnvOverridesDotEnvAndFallsBack(t *testing.T) {
+	baseEnv(t)
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("SERVER_PORT", "9091")
+	t.Setenv("DATABASE_DSN", "postgres://env:secret@localhost:5432/nester?sslmode=disable")
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".env"), strings.Join([]string{
+		"APP_ENV=development",
+		"SERVER_PORT=8080",
+		"DATABASE_DSN=postgres://dotenv:secret@localhost:5432/nester?sslmode=disable",
+		"STELLAR_NETWORK_PASSPHRASE=From DotEnv",
+		"STELLAR_RPC_URL=https://dotenv-rpc.example.com",
+		"STELLAR_HORIZON_URL=https://dotenv-horizon.example.com",
+		"LOG_LEVEL=warn",
+	}, "\n"))
+	chdir(t, dir)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Environment() != "production" {
+		t.Fatalf("expected APP_ENV from process env, got %q", cfg.Environment())
+	}
+	if cfg.Server().Port() != 9091 {
+		t.Fatalf("expected SERVER_PORT from process env, got %d", cfg.Server().Port())
+	}
+	if cfg.Database().DSN() != "postgres://env:secret@localhost:5432/nester?sslmode=disable" {
+		t.Fatalf("expected DATABASE_DSN from process env, got %q", cfg.Database().DSN())
+	}
+	if cfg.Stellar().NetworkPassphrase() != "From DotEnv" {
+		t.Fatalf("expected STELLAR_NETWORK_PASSPHRASE from .env fallback, got %q", cfg.Stellar().NetworkPassphrase())
+	}
+	if cfg.Log().Level() != "warn" {
+		t.Fatalf("expected LOG_LEVEL from .env fallback, got %q", cfg.Log().Level())
+	}
+}
+
+// TestLoadMissingRequiredFieldsPartial verifies targeted error messages when
+// only a subset of required fields are missing.
+func TestLoadMissingRequiredFieldsPartial(t *testing.T) {
+	cases := []struct {
+		name          string
+		set           func(t *testing.T)
+		wantMissing   []string
+		wantNotInErr  []string
+	}{
+		{
+			name: "missing database dsn only",
+			set: func(t *testing.T) {
+				baseEnv(t)
+				t.Setenv("DATABASE_DSN", "")
+				t.Setenv("STELLAR_NETWORK_PASSPHRASE", "Test Network")
+				t.Setenv("STELLAR_RPC_URL", "https://rpc.example.com")
+				t.Setenv("STELLAR_HORIZON_URL", "https://horizon.example.com")
+			},
+			wantMissing:  []string{"DATABASE_DSN is required"},
+			wantNotInErr: []string{"STELLAR_NETWORK_PASSPHRASE is required", "STELLAR_RPC_URL is required", "STELLAR_HORIZON_URL is required"},
+		},
+		{
+			name: "missing both stellar urls",
+			set: func(t *testing.T) {
+				baseEnv(t)
+				t.Setenv("DATABASE_DSN", "postgres://postgres:postgres@localhost:5432/nester?sslmode=disable")
+				t.Setenv("STELLAR_NETWORK_PASSPHRASE", "Test Network")
+				t.Setenv("STELLAR_RPC_URL", "")
+				t.Setenv("STELLAR_HORIZON_URL", "")
+			},
+			wantMissing:  []string{"STELLAR_RPC_URL is required", "STELLAR_HORIZON_URL is required"},
+			wantNotInErr: []string{"DATABASE_DSN is required", "STELLAR_NETWORK_PASSPHRASE is required"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.set(t)
+			chdir(t, t.TempDir())
+
+			_, err := Load()
+			if err == nil {
+				t.Fatal("expected Load() to fail")
+			}
+
+			message := err.Error()
+			for _, expected := range tc.wantMissing {
+				if !strings.Contains(message, expected) {
+					t.Fatalf("expected error to contain %q, got %q", expected, message)
+				}
+			}
+
+			for _, unexpected := range tc.wantNotInErr {
+				if strings.Contains(message, unexpected) {
+					t.Fatalf("did not expect error to contain %q, got %q", unexpected, message)
+				}
+			}
+		})
 	}
 }
 
@@ -538,4 +697,12 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile(%q) error = %v", path, err)
 	}
+}
+
+type testErr struct {
+	message string
+}
+
+func (e *testErr) Error() string {
+	return e.message
 }
