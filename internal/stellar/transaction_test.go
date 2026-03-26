@@ -162,6 +162,7 @@ func TestTransactionSubmission_RetryOnNetworkError(t *testing.T) {
 			assert.True(t, isRetryable, "Expected %s to be retryable", errMsg)
 		})
 	}
+	_ = invoker // Use the variable to avoid unused error
 }
 
 func TestTransactionSubmission_NoRetryOnPermanentError(t *testing.T) {

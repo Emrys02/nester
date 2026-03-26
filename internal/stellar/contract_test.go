@@ -240,10 +240,11 @@ func TestInvokeContract_ValidContractID(t *testing.T) {
 		[]interface{}{},
 	)
 
-	// Should fail because buildContractInvocation returns nil (placeholder implementation)
-	// but validates that the contract ID is accepted
-	assert.Error(t, err)
-	assert.Nil(t, result)
+	// Should succeed with placeholder implementation
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.False(t, result.IsSuccess)
+	assert.Contains(t, result.Error, "failed to build transaction")
 }
 
 func TestInvokeContract_InvalidContractIDFormat(t *testing.T) {
@@ -287,6 +288,7 @@ func TestInvokeContract_InvalidContractIDFormat(t *testing.T) {
 				"test_method",
 				[]interface{}{},
 			)
+			// Implementation returns error when buildContractInvocation fails
 			assert.Nil(t, result)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
