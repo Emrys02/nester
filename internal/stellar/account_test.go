@@ -11,7 +11,6 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stellar/go-stellar-sdk/clients/horizonclient"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // ============================================================================
