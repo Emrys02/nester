@@ -24,8 +24,13 @@ type Claims struct {
 	Scopes        []string `json:"scopes,omitempty"`
 	Roles         []string `json:"roles,omitempty"`
 	SessionID     string   `json:"sid,omitempty"`
-	ExpiresAt     int64    `json:"exp,omitempty"`
-	IssuedAt      int64    `json:"iat,omitempty"`
+	// TokenID uniquely identifies this access-token mint (distinct from
+	// SessionID, which stays stable across rotations). Without it, two
+	// tokens minted within the same wall-clock second for the same session
+	// carry byte-identical claims and would be identical strings.
+	TokenID   string `json:"jti,omitempty"`
+	ExpiresAt int64  `json:"exp,omitempty"`
+	IssuedAt  int64  `json:"iat,omitempty"`
 }
 
 // ParseJWT validates an HS256 Bearer token signed with secret and returns

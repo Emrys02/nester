@@ -202,6 +202,7 @@ func (s *authService) VerifyAndIssue(ctx context.Context, walletAddress, signatu
 		ExpiresAt:     now.Add(s.config.AccessTokenExpiry()).Unix(),
 		Roles:         roles,
 		SessionID:     sess.ID.String(),
+		TokenID:       uuid.NewString(),
 	}, s.config.Secret())
 	if err != nil {
 		return Tokens{}, err
@@ -279,6 +280,7 @@ func (s *authService) Refresh(ctx context.Context, rawRefreshToken string, meta 
 		ExpiresAt:     now.Add(s.config.AccessTokenExpiry()).Unix(),
 		Roles:         roles,
 		SessionID:     sess.ID.String(),
+		TokenID:       uuid.NewString(),
 	}, s.config.Secret())
 	if err != nil {
 		return Tokens{}, err
