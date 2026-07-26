@@ -1,5 +1,6 @@
 // lib/api/vaults.ts
 import { apiRequest } from "@/lib/api/client";
+import { getAccessToken as getStoredToken } from "@/lib/auth/token-store";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
@@ -127,9 +128,4 @@ export const vaultsApi = {
       method: "POST",
       body: JSON.stringify({ allocations }),
     }),
-}
-
-function getStoredToken(): string {
-  if (typeof window === "undefined") return "";
-  return localStorage.getItem("nester_token") ?? "";
 }
