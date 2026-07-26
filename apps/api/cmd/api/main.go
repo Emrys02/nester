@@ -197,37 +197,59 @@ func run() error {
 		Logger:  baseLogger,
 	})
 
-	var challengeStore service.ChallengeStore
+	var redisClient *redis.Client
 	if addr := cfg.Redis().Addr(); addr != "" {
-		redisClient := redis.NewClient(&redis.Options{Addr: addr})
-		challengeStore = service.NewRedisChallengeStore(redisClient, cfg.Auth().ChallengeExpiry())
-		baseLogger.Info("challenge store: redis", "addr", addr)
-	} else {
-		challengeStore = service.NewInMemoryChallengeStore(cfg.Auth().ChallengeExpiry())
-		baseLogger.Info("challenge store: in-memory (single-instance only)")
+		redisClient = redis.NewClient(&redis.Options{Addr: addr})
 	}
 
-	authService := service.NewAuthService(challengeStore, userService, cfg.Auth())
-	authHandler := handler.NewAuthHandler(authService)
+	var challengeStore service.ChallengeStore
+	var revocationCache service.RevocationCache
+	if redisClient != nil {
+		challengeStore = service.NewRedisChallengeStore(redisClient, cfg.Auth().ChallengeExpiry())
+		revocationCache = service.NewRedisRevocationCache(redisClient)
+		baseLogger.Info("challenge store: redis", "addr", cfg.Redis().Addr())
+		baseLogger.Info("revocation cache: redis", "addr", cfg.Redis().Addr())
+	} else {
+		challengeStore = service.NewInMemoryChallengeStore(cfg.Auth().ChallengeExpiry())
+		revocationCache = service.NewInMemoryRevocationCache()
+		baseLogger.Info("challenge store: in-memory (single-instance only)")
+		baseLogger.Info("revocation cache: in-memory (single-instance only)")
+	}
+
+	sessionRepository := postgres.NewSessionRepository(db)
+	auditLogger := postgres.NewPostgresAuditLogger(db)
+	anomalyDetector := service.NoopAnomalyDetector{}
 
 	oracleService := oracle.NewRateService(cfg.Stellar().HorizonURL(), cfg.Stellar().USDCIssuer())
 	rateHandler := handler.NewRateHandler(oracleService)
 
-	wsHub := ws.NewHub(baseLogger.WithGroup("websocket"), func(token string) (string, error) {
+	wsHub := ws.NewHub(baseLogger.WithGroup("websocket"), func(token string) (userID, sessionID string, err error) {
 		if token == "" {
-			return "", fmt.Errorf("missing token")
+			return "", "", fmt.Errorf("missing token")
 		}
 		claims, err := auth.ParseJWT(token, cfg.Auth().Secret())
 		if err != nil {
-			return "", fmt.Errorf("invalid token: %w", err)
+			return "", "", fmt.Errorf("invalid token: %w", err)
 		}
-		return claims.Subject, nil
+		if claims.SessionID != "" {
+			revoked, err := revocationCache.IsRevoked(context.Background(), claims.SessionID)
+			if err != nil {
+				return "", "", fmt.Errorf("session verification unavailable: %w", err)
+			}
+			if revoked {
+				return "", "", fmt.Errorf("session revoked")
+			}
+		}
+		return claims.Subject, claims.SessionID, nil
 	}, cfg.AllowedOrigins())
 
 	wsCtx, wsCancel := context.WithCancel(context.Background())
 	defer wsCancel()
 	go wsHub.Run(wsCtx)
 	vaultHandler.SetWSHub(wsHub)
+
+	authService := service.NewAuthService(challengeStore, userService, sessionRepository, revocationCache, anomalyDetector, auditLogger, wsHub, cfg.Auth())
+	authHandler := handler.NewAuthHandler(authService)
 
 	performanceRepository := postgres.NewPerformanceRepository(db)
 	vaultRepository = postgres.NewVaultRepository(db)
@@ -523,14 +545,18 @@ func run() error {
 		{PathPrefix: "/healthz", Public: true},
 		{PathPrefix: "/readyz", Public: true},
 		{PathPrefix: "/ws", Public: true},
-		{PathPrefix: "/api/v1/auth/", Public: true},
+		{Method: http.MethodPost, PathPrefix: "/api/v1/auth/challenge", Public: true},
+		{Method: http.MethodPost, PathPrefix: "/api/v1/auth/verify", Public: true},
+		{Method: http.MethodPost, PathPrefix: "/api/v1/auth/refresh", Public: true},
+		// No blanket "/api/v1/auth/" rule: logout, logout-all, and sessions
+		// must stay protected and fall through to the "/api/v1/" catch-all.
 		{PathPrefix: "/api/v1/banks/", Public: true},
 		{PathPrefix: "/api/v1/yields/", Public: true},
 		{PathPrefix: "/api/v1/savings-goals/shared/", Public: true},
 		{PathPrefix: "/api/v1/admin/", Public: false, Role: "admin"},
 		{PathPrefix: "/api/v1/", Public: false},
 	}
-	authenticator := middleware.Authenticate(cfg.Auth().Secret(), cfg.Auth().ServiceAPIKey(), authRules)
+	authenticator := middleware.Authenticate(cfg.Auth().Secret(), cfg.Auth().ServiceAPIKey(), authRules, revocationCache)
 	globalLimiter := middleware.IPRateLimiter(cfg.RateLimit().GlobalLimit(), cfg.RateLimit().GlobalWindow())
 	writeLimiter := middleware.WriteMethodRateLimiter(cfg.RateLimit().WriteLimit(), cfg.RateLimit().WriteWindow())
 	walletLimiter := middleware.WalletRateLimiter(
