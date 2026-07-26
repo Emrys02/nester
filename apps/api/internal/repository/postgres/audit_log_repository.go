@@ -5,13 +5,15 @@ import (
 	"database/sql"
 	"encoding/json"
 
-	"github.com/suncrestlabs/nester/apps/api/internal/service"
+	"github.com/suncrestlabs/nester/apps/api/internal/domain/audit"
 )
 
-// PostgresAuditLogger writes AuditEntry values to the existing audit_logs
+// PostgresAuditLogger writes audit.Entry values to the existing audit_logs
 // table (migration 011). Kept narrow — this is not a general audit
-// framework, just enough to satisfy service.AuditLogger for session-security
-// events (entity_type "session").
+// framework, just enough to satisfy service.AuditLogger (service.AuditEntry
+// is an alias of audit.Entry) for session-security events (entity_type
+// "session"). Depends on the domain package rather than service itself so
+// repository -> service never appears in the import graph.
 type PostgresAuditLogger struct {
 	db *sql.DB
 }
@@ -20,7 +22,7 @@ func NewPostgresAuditLogger(db *sql.DB) *PostgresAuditLogger {
 	return &PostgresAuditLogger{db: db}
 }
 
-func (l *PostgresAuditLogger) Log(ctx context.Context, e service.AuditEntry) error {
+func (l *PostgresAuditLogger) Log(ctx context.Context, e audit.Entry) error {
 	oldJSON, err := json.Marshal(e.OldValue)
 	if err != nil {
 		return err
