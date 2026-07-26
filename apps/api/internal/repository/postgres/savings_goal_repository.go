@@ -253,6 +253,31 @@ func (r *SavingsGoalRepository) ListActiveApproachingDeadline(ctx context.Contex
 	return goals, rows.Err()
 }
 
+func (r *SavingsGoalRepository) ListActiveGoalUserIDs(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT DISTINCT user_id
+		FROM savings_goals
+		WHERE (status = 'active' OR status IS NULL OR status = '')
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var idStr string
+		if err := rows.Scan(&idStr); err != nil {
+			return nil, err
+		}
+		uid, err := uuid.Parse(idStr)
+		if err == nil {
+			ids = append(ids, uid)
+		}
+	}
+	return ids, rows.Err()
+}
+
 func (r *SavingsGoalRepository) UpdateStatus(ctx context.Context, goalID, userID uuid.UUID, status string) error {
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE savings_goals SET status = $1, updated_at = NOW()
