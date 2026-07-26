@@ -364,6 +364,13 @@ func run() error {
 	portfolioHandler.Register(mux)
 	transactionHandler.Register(mux)
 	settlementHandler.Register(mux)
+
+	// Unified activity feed (deposits/withdrawals/rebalances/settlements/
+	// yield harvests) backing the dApp's transaction-history page.
+	activityRepository := postgres.NewActivityRepository(db)
+	activityService := service.NewActivityService(activityRepository)
+	activityHandler := handler.NewActivityHandler(activityService)
+	activityHandler.Register(mux)
 	userHandler.Register(mux)
 	notificationHandler.Register(mux)
 	adminHandler.Register(mux)
