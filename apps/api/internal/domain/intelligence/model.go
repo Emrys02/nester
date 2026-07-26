@@ -58,3 +58,16 @@ type SavingsPlanResponse struct {
 	Narrative              string                `json:"narrative"`
 	Milestones             []MilestoneProjection `json:"milestones"`
 }
+
+type NudgeCopyRequest struct {
+	NudgeType string            `json:"nudge_type"`
+	Segment   string            `json:"segment"`
+	Facts     map[string]string `json:"facts"`
+	RequestID string            `json:"request_id"`
+}
+
+type NudgeCopyResponse struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
