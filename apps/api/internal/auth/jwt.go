@@ -23,6 +23,7 @@ type Claims struct {
 	WalletAddress string   `json:"wallet,omitempty"`
 	Scopes        []string `json:"scopes,omitempty"`
 	Roles         []string `json:"roles,omitempty"`
+	SessionID     string   `json:"sid,omitempty"`
 	ExpiresAt     int64    `json:"exp,omitempty"`
 	IssuedAt      int64    `json:"iat,omitempty"`
 }
