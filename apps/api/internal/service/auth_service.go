@@ -9,6 +9,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stellar/go/keypair"
 	"github.com/suncrestlabs/nester/apps/api/internal/auth"
 )
@@ -31,7 +32,7 @@ var (
 
 type AuthService interface {
 	GenerateChallenge(ctx context.Context, walletAddress string) (string, error)
-	VerifyAndIssue(ctx context.Context, walletAddress, signature, challenge string) (string, error)
+	VerifyAndIssue(ctx context.Context, walletAddress, signature, challenge string) (string, uuid.UUID, error)
 }
 
 type AuthConfig interface {
@@ -71,45 +72,45 @@ func (s *authService) GenerateChallenge(ctx context.Context, walletAddress strin
 	return challenge, nil
 }
 
-func (s *authService) VerifyAndIssue(ctx context.Context, walletAddress, signature string, challenge string) (string, error) {
+func (s *authService) VerifyAndIssue(ctx context.Context, walletAddress, signature string, challenge string) (string, uuid.UUID, error) {
 	stored, err := s.store.GetAndDelete(ctx, walletAddress)
 	if err != nil {
 		if errors.Is(err, ErrChallengeNotFound) {
-			return "", ErrChallengeExpired
+			return "", uuid.Nil, ErrChallengeExpired
 		}
-		return "", err
+		return "", uuid.Nil, err
 	}
 
 	if stored != challenge {
-		return "", ErrChallengeExpired
+		return "", uuid.Nil, ErrChallengeExpired
 	}
 
 	kp, err := keypair.ParseAddress(walletAddress)
 	if err != nil {
-		return "", ErrWalletInvalid
+		return "", uuid.Nil, ErrWalletInvalid
 	}
 
 	sigBytes, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
-		return "", ErrSignatureInvalid
+		return "", uuid.Nil, ErrSignatureInvalid
 	}
 
 	hash := sep53MessageHash(challenge)
 	if err := kp.Verify(hash[:], sigBytes); err != nil {
-		return "", ErrSignatureInvalid
+		return "", uuid.Nil, ErrSignatureInvalid
 	}
 
 	user, err := s.userService.GetUserByWallet(ctx, walletAddress)
 	if err != nil {
 		user, err = s.userService.RegisterUser(ctx, walletAddress, walletAddress[:8])
 		if err != nil {
-			return "", err
+			return "", uuid.Nil, err
 		}
 	}
 
 	roles, err := s.userService.GetUserRoles(ctx, user.ID)
 	if err != nil {
-		return "", err
+		return "", uuid.Nil, err
 	}
 
 	claims := auth.Claims{
@@ -120,5 +121,6 @@ func (s *authService) VerifyAndIssue(ctx context.Context, walletAddress, signatu
 		Roles:         roles,
 	}
 
-	return auth.MakeJWT(claims, s.config.Secret())
+	token, err := auth.MakeJWT(claims, s.config.Secret())
+	return token, user.ID, err
 }
