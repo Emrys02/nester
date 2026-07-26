@@ -53,6 +53,7 @@ const (
 	EventScheduledDepositCompleted EventType = "scheduled_deposit_completed"
 	EventSavingsStreak             EventType = "savings_streak_milestone"
 	EventProtocolHealthAlert       EventType = "protocol_health_alert"
+	EventSavingsNudge              EventType = "savings_nudge"
 )
 
 // ChannelKind is the transport a notification is delivered over.
@@ -81,6 +82,7 @@ var eventChannelMatrix = map[EventType][]ChannelKind{
 	EventScheduledDepositCompleted: {ChannelEmail, ChannelWebSocket, ChannelPush},
 	EventSavingsStreak:             {ChannelPush},
 	EventProtocolHealthAlert:       {ChannelEmail, ChannelPush, ChannelWebSocket},
+	EventSavingsNudge:              {ChannelPush, ChannelWebSocket},
 }
 
 // ChannelsFor returns the channels configured to deliver the given event,
