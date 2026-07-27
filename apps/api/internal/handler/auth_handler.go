@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/suncrestlabs/nester/apps/api/internal/domain/user"
 	"github.com/suncrestlabs/nester/apps/api/internal/domain/usersignal"
 	"github.com/suncrestlabs/nester/apps/api/internal/service"
 	"github.com/suncrestlabs/nester/apps/api/pkg/response"
@@ -108,11 +107,9 @@ func (h *AuthHandler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Timezone != "" {
+		// Best-effort: never block login on a timezone-capture failure.
 		tz := req.Timezone
-		if _, err := h.userSvc.UpdateProfile(r.Context(), userID, service.UpdateProfileInput{Timezone: &tz}); err != nil {
-			// Best-effort: never block login on a timezone-capture failure.
-			_ = err
-		}
+		_, _ = h.userSvc.UpdateProfile(r.Context(), userID, service.UpdateProfileInput{Timezone: &tz})
 	}
 	if h.outcomeSvc != nil {
 		_ = h.outcomeSvc.RecordReturnVisit(r.Context(), userID, time.Now())
