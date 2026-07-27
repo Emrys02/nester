@@ -53,7 +53,13 @@ func TestToolAuditHandler_Auth(t *testing.T) {
 	defer server.Close()
 
 	// Create user JWT (no service role)
-	userToken, _ := auth.GenerateJWT("user-1", "", nil, nil, secret, time.Hour)
+	userToken, err := auth.MakeJWT(auth.Claims{
+		Subject:   "user-1",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}, secret)
+	if err != nil {
+		t.Fatalf("make signed token: %v", err)
+	}
 
 	// Test 1: Normal user token should fail
 	req1, _ := http.NewRequest("POST", server.URL+"/api/v1/internal/intelligence/tool-audit", bytes.NewBuffer([]byte(`{"user_id":"user-1"}`)))

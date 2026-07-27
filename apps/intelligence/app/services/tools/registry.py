@@ -1,7 +1,8 @@
-from typing import List, Dict, Any
-from .types import Tool
-from .read_tools import READ_TOOLS
+from typing import Any, Dict, List
+
 from .action_tools import ACTION_TOOLS
+from .read_tools import READ_TOOLS
+from .types import Tool
 
 TOOL_REGISTRY: List[Tool] = READ_TOOLS + ACTION_TOOLS
 
@@ -22,7 +23,7 @@ def list_tool_schemas() -> List[Dict[str, Any]]:
         }
         if "required" in schema:
             input_schema["required"] = schema["required"]
-        
+
         schemas.append({
             "name": tool.name,
             "description": tool.description,

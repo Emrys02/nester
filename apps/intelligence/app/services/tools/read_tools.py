@@ -1,10 +1,12 @@
+from typing import Any
+
 import aiohttp
 from pydantic import BaseModel
-from typing import Any
-from .types import Tool, ToolContext
-from ..vault_context import VaultContextFetcher
-from ..guardrails import wrap_context_block
+
 from ...config import settings
+from ..guardrails import wrap_context_block
+from ..vault_context import VaultContextFetcher
+from .types import Tool, ToolContext
 
 fetcher = VaultContextFetcher(
     api_base_url=settings.nester_api_base_url,
@@ -90,7 +92,9 @@ async def list_goals_handler(ctx: ToolContext, **kwargs) -> Any:
                 data = payload.get("data", payload) if isinstance(payload, dict) else payload
                 return wrap_context_block("savings_goals", str(data))
             text = await response.text()
-            return wrap_context_block("savings_goals", f"Failed to fetch goals: {response.status} {text}")
+            return wrap_context_block(
+                "savings_goals", f"Failed to fetch goals: {response.status} {text}"
+            )
 
 list_goals = Tool(
     name="list_goals",
