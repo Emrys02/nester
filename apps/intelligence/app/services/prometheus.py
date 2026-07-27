@@ -490,7 +490,12 @@ async def stream_chat(
 
                 if final_msg.stop_reason == "tool_use":
                     blocks_dict = [b.model_dump() for b in final_msg.content]
-                    messages.append(cast(anthropic.types.MessageParam, {"role": "assistant", "content": blocks_dict}))
+                    messages.append(
+                        cast(
+                            anthropic.types.MessageParam,
+                            {"role": "assistant", "content": blocks_dict}
+                        )
+                    )
                     conversation_store.append(user_id, "assistant", json.dumps(blocks_dict))
 
                     tool_results = []
@@ -579,7 +584,9 @@ async def stream_chat(
                                         args.model_dump(mode="json")
                                     )
                                 else:
-                                    confirmation_text = "Are you sure you want to perform this action?"
+                                    confirmation_text = (
+                                        "Are you sure you want to perform this action?"
+                                    )
 
                                 pending_action = {
                                     "proposal_id": proposal_id,
@@ -618,7 +625,12 @@ async def stream_chat(
                                 yield "data: [DONE]\n\n"
                                 return
 
-                    messages.append(cast(anthropic.types.MessageParam, {"role": "user", "content": tool_results}))
+                    messages.append(
+                        cast(
+                            anthropic.types.MessageParam,
+                            {"role": "user", "content": tool_results}
+                        )
+                    )
                     conversation_store.append(user_id, "user", json.dumps(tool_results))
                     continue
 
