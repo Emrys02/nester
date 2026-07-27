@@ -117,12 +117,12 @@ func TestAuthService_VerifyAndIssue_Success(t *testing.T) {
 	require.NoError(t, err)
 	sigStr := base64.StdEncoding.EncodeToString(sigBytes)
 
-	token, err := svc.VerifyAndIssue(context.Background(), kp.Address(), sigStr, challenge)
+	token, _, err := svc.VerifyAndIssue(context.Background(), kp.Address(), sigStr, challenge)
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
 
 	// One-time use: using it again should fail
-	_, err = svc.VerifyAndIssue(context.Background(), kp.Address(), sigStr, challenge)
+	_, _, err = svc.VerifyAndIssue(context.Background(), kp.Address(), sigStr, challenge)
 	assert.ErrorIs(t, err, ErrChallengeExpired)
 }
 
@@ -138,7 +138,7 @@ func TestAuthService_VerifyAndIssue_InvalidSignature(t *testing.T) {
 	sigBytes, _ := randomKp.Sign(hash[:])
 	sigStr := base64.StdEncoding.EncodeToString(sigBytes)
 
-	_, err = svc.VerifyAndIssue(context.Background(), kp.Address(), sigStr, challenge)
+	_, _, err = svc.VerifyAndIssue(context.Background(), kp.Address(), sigStr, challenge)
 	assert.ErrorIs(t, err, ErrSignatureInvalid)
 }
 
@@ -158,7 +158,7 @@ func TestAuthService_VerifyAndIssue_ExpiredChallenge(t *testing.T) {
 	sigBytes, _ := kp.Sign(hash[:])
 	sigStr := base64.StdEncoding.EncodeToString(sigBytes)
 
-	_, err := svc.VerifyAndIssue(context.Background(), kp.Address(), sigStr, challenge)
+	_, _, err := svc.VerifyAndIssue(context.Background(), kp.Address(), sigStr, challenge)
 	assert.ErrorIs(t, err, ErrChallengeExpired)
 }
 
@@ -190,7 +190,7 @@ func TestAuthService_VerifyAndIssue_AdminRolePopulatedInToken(t *testing.T) {
 	sigBytes, err := kp.Sign(hash[:])
 	require.NoError(t, err)
 
-	token, err := svc.VerifyAndIssue(context.Background(), kp.Address(), base64.StdEncoding.EncodeToString(sigBytes), challenge)
+	token, _, err := svc.VerifyAndIssue(context.Background(), kp.Address(), base64.StdEncoding.EncodeToString(sigBytes), challenge)
 	require.NoError(t, err)
 
 	claims, err := auth.ParseJWT(token, cfg.secret)
@@ -216,7 +216,7 @@ func TestAuthService_VerifyAndIssue_RegularUserHasEmptyRoles(t *testing.T) {
 	sigBytes, err := kp.Sign(hash[:])
 	require.NoError(t, err)
 
-	token, err := svc.VerifyAndIssue(context.Background(), kp.Address(), base64.StdEncoding.EncodeToString(sigBytes), challenge)
+	token, _, err := svc.VerifyAndIssue(context.Background(), kp.Address(), base64.StdEncoding.EncodeToString(sigBytes), challenge)
 	require.NoError(t, err)
 
 	claims, err := auth.ParseJWT(token, cfg.secret)
