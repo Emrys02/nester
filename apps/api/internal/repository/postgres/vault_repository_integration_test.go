@@ -265,8 +265,8 @@ func applyIntegrationMigrations(t *testing.T, db *sql.DB) {
 		"023_vault_transactions_hash_unique.up.sql",
 		"036_allow_harvest_transaction_type.up.sql",
 		"042_create_yield_harvests.up.sql",
-		"057_add_vault_name_description_search.up.sql",
-		"058_add_vault_transactions_memo_search.up.sql",
+		"061_add_vault_name_description_search.up.sql",
+		"062_add_vault_transactions_memo_search.up.sql",
 	} {
 		path := filepath.Join("..", "..", "..", "migrations", name)
 		contents, err := os.ReadFile(path)
