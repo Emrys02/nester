@@ -2,7 +2,6 @@ package usersignal
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 )

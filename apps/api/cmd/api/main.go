@@ -330,7 +330,7 @@ func run() error {
 		func(ctx context.Context, tx transaction.Transaction) {
 			wsHub.BroadcastEvent(transactionStatusEvent(tx))
 			if tx.Status == transaction.StatusCompleted && tx.Type == transaction.TypeDeposit {
-				if v, err := vaultRepository.GetByID(ctx, tx.VaultID); err == nil {
+				if v, err := vaultRepository.GetVault(ctx, tx.VaultID); err == nil {
 					_ = nudgeOutcomeService.RecordDeposit(ctx, v.UserID, time.Now())
 					if nudgeEngineSvc != nil {
 						_ = nudgeEngineSvc.EvaluateAndDispatch(ctx, v.UserID)
