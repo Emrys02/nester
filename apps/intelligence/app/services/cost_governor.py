@@ -1,6 +1,5 @@
 import logging
 from datetime import UTC, datetime
-from typing import Optional
 
 from app.config import settings
 

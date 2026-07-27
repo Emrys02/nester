@@ -4,8 +4,8 @@ from typing import Any, Optional
 import aiohttp
 from pydantic import BaseModel, ConfigDict
 
-from .types import Tool, ToolContext
 from ...config import settings
+from .types import Tool, ToolContext
 
 
 class CreateSavingsGoalArgs(BaseModel):
@@ -66,7 +66,9 @@ class CreateRecurringDepositArgs(BaseModel):
     frequency: str
 
 
-async def _fetch_goal_vault_id(session: aiohttp.ClientSession, headers: dict, goal_id: str) -> Optional[str]:
+async def _fetch_goal_vault_id(
+    session: aiohttp.ClientSession, headers: dict, goal_id: str
+) -> Optional[str]:
     url = f"{settings.nester_api_base_url}/api/v1/users/savings-goals/{goal_id}"
     async with session.get(url, headers=headers) as response:
         if response.status != 200:

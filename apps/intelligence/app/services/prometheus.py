@@ -283,11 +283,11 @@ def _to_anthropic_messages(
                     content = parsed
             except Exception:
                 pass
-        
+
         if msg["role"] == "user":
             if isinstance(content, str):
                 content = guardrails.wrap_user_content(content)
-        
+
         out.append({
             "role": cast(Literal["user", "assistant"], msg["role"]),
             "content": content,
@@ -403,18 +403,21 @@ async def stream_chat(
     client = get_client()
 
     import uuid
+
     from pydantic import ValidationError
 
     try:
-        from app.services.tools.registry import list_tool_schemas, TOOL_REGISTRY
-        from app.services.tools.types import ToolContext
         from app.services.cost_governor import cost_governor as gov
         from app.services.tool_audit_client import record_audit_event
+        from app.services.tools.registry import TOOL_REGISTRY, list_tool_schemas
+        from app.services.tools.types import ToolContext
     except ImportError:
         gov = None
         TOOL_REGISTRY = []
-        list_tool_schemas = lambda: []
         record_audit_event = None
+
+        def list_tool_schemas():
+            return []
 
     async def _audit(**kwargs) -> None:
         if record_audit_event is not None:
@@ -471,7 +474,7 @@ async def stream_chat(
                         pending, request_id=request_id
                     ).replace("\n", "\\n")
                     yield f"data: {safe_chunk}\n\n"
-                
+
                 final_msg = await stream.get_final_message()
                 if gov:
                     gov.record_usage(
@@ -484,12 +487,12 @@ async def stream_chat(
                 )
                 if clean_response:
                     conversation_store.append(user_id, "assistant", clean_response)
-                
+
                 if final_msg.stop_reason == "tool_use":
                     blocks_dict = [b.model_dump() for b in final_msg.content]
                     messages.append({"role": "assistant", "content": blocks_dict})
                     conversation_store.append(user_id, "assistant", json.dumps(blocks_dict))
-                    
+
                     tool_results = []
                     for block in final_msg.content:
                         if block.type == "tool_use":
@@ -502,7 +505,7 @@ async def stream_chat(
                                     "content": f"Tool {block.name} not found"
                                 })
                                 continue
-                            
+
                             try:
                                 args = tool.args_model(**block.input)
                             except ValidationError as e:
@@ -544,7 +547,9 @@ async def stream_chat(
                                         status="executed",
                                         result=res,
                                     )
-                                    wrapped = guardrails.wrap_context_block(f"{tool.name}_result", json.dumps(res))
+                                    wrapped = guardrails.wrap_context_block(
+                                        f"{tool.name}_result", json.dumps(res)
+                                    )
                                     tool_results.append({
                                         "type": "tool_result",
                                         "tool_use_id": block.id,
@@ -569,7 +574,9 @@ async def stream_chat(
                                     })
                             else:
                                 proposal_id = str(uuid.uuid4())
-                                confirmation_text = tool.confirmation_template(args.model_dump(mode="json"))
+                                confirmation_text = tool.confirmation_template(
+                                    args.model_dump(mode="json")
+                                )
 
                                 pending_action = {
                                     "proposal_id": proposal_id,
@@ -593,30 +600,35 @@ async def stream_chat(
 
                                 r = _get_redis()
                                 if r:
-                                    r.setex(f"pending_action:{proposal_id}", 900, json.dumps(pending_action))
+                                    r.setex(
+                                        f"pending_action:{proposal_id}",
+                                        900,
+                                        json.dumps(pending_action),
+                                    )
 
                                 pending_evt = {
                                     "proposal_id": proposal_id,
                                     "text": confirmation_text
                                 }
-                                yield f"event: pending_confirmation\ndata: {json.dumps(pending_evt)}\n\n"
+                                pending_payload = json.dumps(pending_evt)
+                                yield f"event: pending_confirmation\ndata: {pending_payload}\n\n"
                                 yield "data: [DONE]\n\n"
                                 return
-                    
+
                     messages.append({"role": "user", "content": tool_results})
                     conversation_store.append(user_id, "user", json.dumps(tool_results))
-                    continue 
+                    continue
 
                 else:
                     yield "data: [DONE]\n\n"
                     return
 
-        except Exception as e:
+        except Exception:
             logger.exception("Anthropic streaming error for user %s", user_id)
             yield "data: Sorry, I had trouble connecting. Please try again.\n\n"
             yield "data: [DONE]\n\n"
             return
-            
+
     yield "data: Task requires too many steps, please break it down.\n\n"
     yield "data: [DONE]\n\n"
 

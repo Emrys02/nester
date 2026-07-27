@@ -5,13 +5,13 @@ import redis
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from ..dependencies.auth import verify_jwt
 from ..config import settings
+from ..dependencies.auth import verify_jwt
+from ..services import guardrails
+from ..services.conversation_store import store as conversation_store
+from ..services.tool_audit_client import record_audit_event
 from ..services.tools.registry import get_tool
 from ..services.tools.types import ToolContext
-from ..services.tool_audit_client import record_audit_event
-from ..services.conversation_store import store as conversation_store
-from ..services import guardrails
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,12 @@ async def confirm_tool_action(
         # later chat turn for this user 400s on replay.
         if not tool_use_id:
             return
-        block = {"type": "tool_result", "tool_use_id": tool_use_id, "content": content, "is_error": is_error}
+        block = {
+            "type": "tool_result",
+            "tool_use_id": tool_use_id,
+            "content": content,
+            "is_error": is_error,
+        }
         conversation_store.append(user_id, "user", json.dumps([block]))
 
     if not payload.approved:
@@ -135,7 +140,10 @@ async def confirm_tool_action(
         status = "executed"
         error_message = ""
         assistant_message = "Done — that's been set up."
-        _append_tool_result(guardrails.wrap_context_block(f"{tool.name}_result", json.dumps(result)), is_error=False)
+        _append_tool_result(
+            guardrails.wrap_context_block(f"{tool.name}_result", json.dumps(result)),
+            is_error=False,
+        )
     except Exception as e:
         logger.error(f"Tool execution failed: {e}")
         result = None

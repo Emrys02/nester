@@ -1,6 +1,8 @@
-from pydantic import BaseModel
-from typing import Callable, Any, Optional
 from dataclasses import dataclass
+from typing import Any, Callable, Optional
+
+from pydantic import BaseModel
+
 
 @dataclass
 class ToolContext:
@@ -8,6 +10,7 @@ class ToolContext:
     request_id: str
     conversation_id: str
     authorization_header: str
+
 
 @dataclass
 class Tool:
