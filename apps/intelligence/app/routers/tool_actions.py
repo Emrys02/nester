@@ -5,7 +5,6 @@ from typing import Any
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from typing import Any
 
 from ..config import settings
 from ..dependencies.auth import verify_jwt
