@@ -12,6 +12,7 @@ import anthropic
 
 from app.config import settings
 from app.models.coaching import CoachingRequest, CoachingResponse
+from app.models.nudge import NudgeCopyResponse
 from app.models.portfolio import (
     AllocationItem,
     PortfolioAnalysisResponse,
@@ -797,12 +798,12 @@ async def get_yield_recommendation() -> dict[str, Any]:
 
 async def generate_nudge_copy(
     nudge_type: str, facts: dict[str, str], segment: str, request_id: str = ""
-) -> dict[str, str]:
+) -> NudgeCopyResponse:
     """Generate LLM-driven copy for a nudge and validate its grounding."""
-    fallback = {
-        "title": "A quick update",
-        "body": "Check your savings progress in the app.",
-    }
+    fallback = NudgeCopyResponse(
+        title="A quick update",
+        body="Check your savings progress in the app.",
+    )
 
     # Facts include user-authored free text (e.g. a goal's display name), so
     # screen it like any other untrusted input before it reaches the prompt.
@@ -839,16 +840,16 @@ async def generate_nudge_copy(
         )
 
         result = json.loads(_json_strip(text))
-        title = str(result.get("title", fallback["title"]))
-        body = str(result.get("body", fallback["body"]))
+        title = str(result.get("title", fallback.title))
+        body = str(result.get("body", fallback.body))
 
         if not guardrails.validate_numeric_grounding(f"{title} {body}", facts):
             raise ValueError("Numeric grounding validation failed.")
 
-        return {
-            "title": guardrails.strip_system_prompt_leakage(title, request_id=request_id),
-            "body": guardrails.strip_system_prompt_leakage(body, request_id=request_id),
-        }
+        return NudgeCopyResponse(
+            title=guardrails.strip_system_prompt_leakage(title, request_id=request_id),
+            body=guardrails.strip_system_prompt_leakage(body, request_id=request_id),
+        )
     except Exception:
         logger.exception("Failed to generate nudge copy")
         return fallback
