@@ -284,13 +284,15 @@ def validate_numeric_grounding(text: str, allowed_facts: dict[str, str]) -> bool
     allowed_vals = [str(v) for v in allowed_facts.values() if v]
 
     for raw in candidates:
+        is_percent = raw.endswith("%")
         token = raw.rstrip("%").replace(",", "")
         if not token or token == ".":
             continue
         # Bare single/double-digit integers without a decimal point are too
         # common in ordinary prose (dates, list numbers, short counts) to
-        # treat as a quoted fact.
-        if "." not in token and len(token) <= 2:
+        # treat as a quoted fact — but a percentage is always fact-shaped
+        # regardless of digit count (an "8%" vs "15%" APY mismatch matters).
+        if not is_percent and "." not in token and len(token) <= 2:
             continue
         if not any(token in av or av in token for av in allowed_vals):
             return False
