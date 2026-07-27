@@ -4,6 +4,7 @@ import logging
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from typing import Any
 
 from ..config import settings
 from ..dependencies.auth import verify_jwt
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["tools"])
 
 
-def get_redis_client():
+def get_redis_client() -> redis.Redis:
     if not settings.redis_url:
         raise HTTPException(status_code=500, detail="Redis is not configured")
     try:
@@ -42,8 +43,8 @@ async def confirm_tool_action(
     proposal_id: str,
     payload: ConfirmRequest,
     request: Request,
-    claims: dict = Depends(verify_jwt),
-):
+    claims: dict[str, Any] = Depends(verify_jwt),
+) -> ConfirmResponse:
     user_id = claims.get("sub")
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid user ID in token")

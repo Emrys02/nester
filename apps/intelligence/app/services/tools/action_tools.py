@@ -19,7 +19,7 @@ class CreateSavingsGoalArgs(BaseModel):
     emoji: Optional[str] = None
 
 
-async def create_savings_goal_handler(ctx: ToolContext, **kwargs) -> Any:
+async def create_savings_goal_handler(ctx: ToolContext, **kwargs: Any) -> Any:
     deadline = kwargs.pop("deadline")
     if isinstance(deadline, datetime):
         if deadline.tzinfo is None:
@@ -40,7 +40,7 @@ async def create_savings_goal_handler(ctx: ToolContext, **kwargs) -> Any:
             raise Exception(f"Failed to create savings goal: {response.status} {text}")
 
 
-def create_savings_goal_template(args: dict) -> str:
+def create_savings_goal_template(args: dict[str, Any]) -> str:
     return (
         f"Create a savings goal '{args.get('name')}' for {args.get('target_amount')} "
         f"{args.get('currency')} by {args.get('deadline')}?"
@@ -67,7 +67,7 @@ class CreateRecurringDepositArgs(BaseModel):
 
 
 async def _fetch_goal_vault_id(
-    session: aiohttp.ClientSession, headers: dict, goal_id: str
+    session: aiohttp.ClientSession, headers: dict[str, str], goal_id: str
 ) -> Optional[str]:
     url = f"{settings.nester_api_base_url}/api/v1/users/savings-goals/{goal_id}"
     async with session.get(url, headers=headers) as response:
@@ -78,10 +78,11 @@ async def _fetch_goal_vault_id(
         # Go's response envelope is {"success": true, "data": {...}}; tolerate
         # either that shape or a bare goal object.
         goal = payload.get("data", payload) if isinstance(payload, dict) else payload
-        return goal.get("vault_id")
+        vault_id = goal.get("vault_id")
+        return str(vault_id) if vault_id else None
 
 
-async def create_recurring_deposit_handler(ctx: ToolContext, **kwargs) -> Any:
+async def create_recurring_deposit_handler(ctx: ToolContext, **kwargs: Any) -> Any:
     goal_id = kwargs.pop("goal_id")
     headers = {
         "Authorization": ctx.authorization_header,
@@ -104,7 +105,7 @@ async def create_recurring_deposit_handler(ctx: ToolContext, **kwargs) -> Any:
             raise Exception(f"Failed to create recurring deposit: {response.status} {text}")
 
 
-def create_recurring_deposit_template(args: dict) -> str:
+def create_recurring_deposit_template(args: dict[str, Any]) -> str:
     return (
         f"Set up a recurring deposit of {args.get('amount')} {args.get('currency')} "
         f"every {args.get('frequency')} into this goal?"

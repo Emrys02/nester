@@ -16,7 +16,7 @@ fetcher = VaultContextFetcher(
 class EmptyArgs(BaseModel):
     pass
 
-async def get_balance_handler(ctx: ToolContext, **kwargs) -> Any:
+async def get_balance_handler(ctx: ToolContext, **kwargs: Any) -> Any:
     vaults = await fetcher.fetch_user_vaults(ctx.user_id)
     total = sum(v.get("balance_usd", 0) for v in vaults)
     return wrap_context_block("balance", f"Total balance: ${total:,.2f}")
@@ -29,7 +29,7 @@ get_balance = Tool(
     handler=get_balance_handler,
 )
 
-async def get_portfolio_handler(ctx: ToolContext, **kwargs) -> Any:
+async def get_portfolio_handler(ctx: ToolContext, **kwargs: Any) -> Any:
     vaults = await fetcher.fetch_user_vaults(ctx.user_id)
     market_rates = await fetcher.fetch_market_rates()
     block = fetcher.build_context_block(vaults, market_rates)
@@ -43,7 +43,7 @@ get_portfolio = Tool(
     handler=get_portfolio_handler,
 )
 
-async def get_market_rates_handler(ctx: ToolContext, **kwargs) -> Any:
+async def get_market_rates_handler(ctx: ToolContext, **kwargs: Any) -> Any:
     market_rates = await fetcher.fetch_market_rates()
     block = fetcher.build_context_block([], market_rates)
     return wrap_context_block("market_rates", block)
@@ -56,7 +56,7 @@ get_market_rates = Tool(
     handler=get_market_rates_handler,
 )
 
-async def get_risk_profile_handler(ctx: ToolContext, **kwargs) -> Any:
+async def get_risk_profile_handler(ctx: ToolContext, **kwargs: Any) -> Any:
     vaults = await fetcher.fetch_user_vaults(ctx.user_id)
     risk_data = {}
     for v in vaults:
@@ -72,7 +72,7 @@ get_risk_profile = Tool(
     handler=get_risk_profile_handler,
 )
 
-async def list_goals_handler(ctx: ToolContext, **kwargs) -> Any:
+async def list_goals_handler(ctx: ToolContext, **kwargs: Any) -> Any:
     url = f"{settings.nester_api_base_url}/api/v1/users/savings-goals"
     # Read tools run automatically inside the chat loop, without a real
     # per-request user JWT (ctx.authorization_header is not populated

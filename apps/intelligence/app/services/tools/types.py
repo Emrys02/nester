@@ -18,5 +18,5 @@ class Tool:
     description: str
     args_model: type[BaseModel]
     consequential: bool
-    handler: Callable[[ToolContext, Any], Any]  # Actually (ToolContext, **kwargs)
-    confirmation_template: Optional[Callable[[Any], str]] = None
+    handler: Callable[..., Any]
+    confirmation_template: Optional[Callable[..., str]] = None

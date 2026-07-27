@@ -1,5 +1,6 @@
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from app.config import settings
 
@@ -7,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 class CostGovernor:
     def __init__(self, redis_url: str):
+        self._client: Any = None
         try:
             import redis
             self._client = redis.from_url(redis_url, decode_responses=True)

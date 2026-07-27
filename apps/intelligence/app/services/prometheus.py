@@ -280,7 +280,7 @@ def _to_anthropic_messages(
             try:
                 parsed = json.loads(content)
                 if isinstance(parsed, list):
-                    content = parsed
+                    content = parsed  # type: ignore
             except Exception:
                 pass
 
@@ -288,10 +288,10 @@ def _to_anthropic_messages(
             if isinstance(content, str):
                 content = guardrails.wrap_user_content(content)
 
-        out.append({
+        out.append(cast(anthropic.types.MessageParam, {
             "role": cast(Literal["user", "assistant"], msg["role"]),
             "content": content,
-        })
+        }))
     return out
 
 
@@ -412,11 +412,11 @@ async def stream_chat(
         from app.services.tools.registry import TOOL_REGISTRY, list_tool_schemas
         from app.services.tools.types import ToolContext
     except ImportError:
-        gov = None
-        TOOL_REGISTRY = []
-        record_audit_event = None
+        gov = None  # type: ignore
+        TOOL_REGISTRY = []  # type: ignore
+        record_audit_event = None  # type: ignore
 
-        def list_tool_schemas():
+        def list_tool_schemas() -> list[dict[str, Any]]:  # type: ignore
             return []
 
     async def _audit(**kwargs) -> None:
@@ -439,8 +439,8 @@ async def stream_chat(
         _LEAK_OVERLAP = guardrails.LEAK_MARKER_MAX_LEN - 1
 
         try:
-            tools_arg = list_tool_schemas() if list_tool_schemas else []
-            kwargs = {
+            tools_arg = list_tool_schemas()
+            kwargs: dict[str, Any] = {
                 "model": settings.anthropic_model,
                 "max_tokens": CHAT_MAX_TOKENS,
                 "system": dynamic_system_prompt,
@@ -490,7 +490,7 @@ async def stream_chat(
 
                 if final_msg.stop_reason == "tool_use":
                     blocks_dict = [b.model_dump() for b in final_msg.content]
-                    messages.append({"role": "assistant", "content": blocks_dict})
+                    messages.append(cast(anthropic.types.MessageParam, {"role": "assistant", "content": blocks_dict}))
                     conversation_store.append(user_id, "assistant", json.dumps(blocks_dict))
 
                     tool_results = []
@@ -574,9 +574,12 @@ async def stream_chat(
                                     })
                             else:
                                 proposal_id = str(uuid.uuid4())
-                                confirmation_text = tool.confirmation_template(
-                                    args.model_dump(mode="json")
-                                )
+                                if tool.confirmation_template:
+                                    confirmation_text = tool.confirmation_template(
+                                        args.model_dump(mode="json")
+                                    )
+                                else:
+                                    confirmation_text = "Are you sure you want to perform this action?"
 
                                 pending_action = {
                                     "proposal_id": proposal_id,
@@ -615,7 +618,7 @@ async def stream_chat(
                                 yield "data: [DONE]\n\n"
                                 return
 
-                    messages.append({"role": "user", "content": tool_results})
+                    messages.append(cast(anthropic.types.MessageParam, {"role": "user", "content": tool_results}))
                     conversation_store.append(user_id, "user", json.dumps(tool_results))
                     continue
 
