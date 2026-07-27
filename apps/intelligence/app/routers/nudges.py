@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
+
+from app.dependencies.auth import get_api_key
 from app.models.nudge import NudgeCopyRequest, NudgeCopyResponse
 from app.services.prometheus import generate_nudge_copy
-from app.dependencies.auth import get_api_key
 
 router = APIRouter()
 

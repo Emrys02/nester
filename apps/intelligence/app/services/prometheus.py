@@ -795,7 +795,9 @@ async def get_yield_recommendation() -> dict[str, Any]:
         }
 
 
-async def generate_nudge_copy(nudge_type: str, facts: dict[str, str], segment: str, request_id: str = "") -> dict[str, str]:
+async def generate_nudge_copy(
+    nudge_type: str, facts: dict[str, str], segment: str, request_id: str = ""
+) -> dict[str, str]:
     """Generate LLM-driven copy for a nudge and validate its grounding."""
     fallback = {
         "title": "A quick update",
