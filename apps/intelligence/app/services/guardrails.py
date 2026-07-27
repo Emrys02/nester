@@ -177,8 +177,19 @@ def screen_input(text: str, *, request_id: str, user_id: str = "") -> ScreenResu
 def _wrap(tag: str, content: str, max_chars: int) -> str:
     truncated = content[:max_chars]
     close_tag = f"</{tag}>"
-    # Neutralise any attempt to smuggle a fake closing tag to escape the block.
-    escaped = truncated.replace(close_tag, "").replace(f"<{tag}>", "")
+    open_re = re.compile(re.escape(f"<{tag}>"), re.IGNORECASE)
+    close_re = re.compile(re.escape(close_tag), re.IGNORECASE)
+    # Neutralise any attempt to smuggle a fake open/closing tag to escape the
+    # block. A single pass isn't enough: overlapping fragments like
+    # "<user_mess<user_message>age>" only become a complete tag after the
+    # inner one is stripped, so repeat (case-insensitively) until a fixed
+    # point is reached and nothing more is removable.
+    escaped = truncated
+    while True:
+        stripped = close_re.sub("", open_re.sub("", escaped))
+        if stripped == escaped:
+            break
+        escaped = stripped
     return f"<{tag}>\n{escaped}\n{close_tag}"
 
 
