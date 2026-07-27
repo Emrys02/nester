@@ -1,8 +1,7 @@
 import {
   getAccessToken,
-  getRefreshToken,
   getOrCreateDeviceFingerprint,
-  setTokens,
+  setAccessToken,
   clearTokens,
 } from "@/lib/auth/token-store";
 
@@ -58,9 +57,9 @@ type ApiEnvelope<T> = {
 // call. Without this, N concurrent requests hitting a stale access token
 // would each attempt to rotate the refresh token, and the server's reuse
 // detection would treat the losers as token theft and kill the session.
-let refreshInFlight: Promise<{ access_token: string; refresh_token: string }> | null = null;
+let refreshInFlight: Promise<{ access_token: string }> | null = null;
 
-async function refreshTokens(): Promise<{ access_token: string; refresh_token: string }> {
+async function refreshTokens(): Promise<{ access_token: string }> {
   if (!refreshInFlight) {
     refreshInFlight = performRefresh().finally(() => {
       refreshInFlight = null;
@@ -69,28 +68,40 @@ async function refreshTokens(): Promise<{ access_token: string; refresh_token: s
   return refreshInFlight;
 }
 
-async function performRefresh(): Promise<{ access_token: string; refresh_token: string }> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) {
-    clearTokens();
-    throw new ApiError(401, "NO_REFRESH_TOKEN", "No active session");
+async function performRefresh(): Promise<{ access_token: string }> {
+  // The refresh token itself is an httpOnly cookie set by the server — this
+  // client never reads or sends it explicitly; `credentials: "include"`
+  // makes the browser attach it (and store the rotated one from the
+  // response) automatically.
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        device_fingerprint: getOrCreateDeviceFingerprint(),
+      }),
+    });
+  } catch {
+    // Network failure — the refresh token was never actually rejected, so
+    // don't tear down the session over a transient connectivity blip.
+    throw new ApiError(0, "NETWORK_ERROR", "Could not reach the server to refresh the session");
   }
 
-  const res = await fetch(`${API_BASE}/auth/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      refresh_token: refreshToken,
-      device_fingerprint: getOrCreateDeviceFingerprint(),
-    }),
-  });
-
   const body = await res.text();
-  const json = body.trim()
-    ? (JSON.parse(body) as ApiEnvelope<{ access_token: string; refresh_token: string }>)
-    : null;
+  let json: ApiEnvelope<{ access_token: string }> | null = null;
+  if (body.trim()) {
+    try {
+      json = JSON.parse(body) as ApiEnvelope<{ access_token: string }>;
+    } catch {
+      json = null;
+    }
+  }
 
-  if (!res.ok || !json?.success) {
+  if (res.status === 401 || res.status === 403) {
+    // The refresh token itself was rejected (expired, reused, revoked,
+    // device mismatch) — this is a genuine end of session.
     clearTokens();
     throw new ApiError(
       res.status,
@@ -99,7 +110,19 @@ async function performRefresh(): Promise<{ access_token: string; refresh_token: 
     );
   }
 
-  setTokens(json.data.access_token, json.data.refresh_token);
+  if (!res.ok || !json?.success) {
+    // 5xx / malformed response — transient. The refresh token may still be
+    // valid, so preserve the local session rather than forcing a re-login;
+    // let the caller (reactive retry or the proactive-refresh timer) try
+    // again.
+    throw new ApiError(
+      res.status,
+      json?.error?.code ?? "REFRESH_UNAVAILABLE",
+      json?.error?.message ?? "Could not refresh the session, please try again"
+    );
+  }
+
+  setAccessToken(json.data.access_token);
   return json.data;
 }
 
@@ -127,6 +150,9 @@ async function apiFetch<T>(
   }
 
   const res = await fetch(`${API_BASE}${path}`, {
+    // Needed so /auth/verify, /auth/logout(-all) can set/clear the httpOnly
+    // refresh cookie via Set-Cookie — harmless for every other route.
+    credentials: "include",
     ...init,
     headers,
   });
@@ -285,9 +311,10 @@ export interface ChallengeResponse {
   challenge: string;
 }
 
+// The refresh token is never present here — the server sets it as an
+// httpOnly cookie instead (see lib/auth/token-store.ts).
 export interface TokenResponse {
   access_token: string;
-  refresh_token: string;
   expires_in: number;
   token_type: string;
 }

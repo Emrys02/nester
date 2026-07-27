@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { apiRequest, ApiError } from "@/lib/api/client";
-import { setTokens, getAccessToken, getRefreshToken } from "@/lib/auth/token-store";
+import { setAccessToken, getAccessToken } from "@/lib/auth/token-store";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -12,7 +12,7 @@ function jsonResponse(status: number, body: unknown): Response {
 describe("apiFetch transparent refresh", () => {
   beforeEach(() => {
     window.localStorage.clear();
-    setTokens("expired-access-token", "valid-refresh-token");
+    setAccessToken("expired-access-token");
   });
 
   it("refreshes once on 401 and retries the original request", async () => {
@@ -25,7 +25,7 @@ describe("apiFetch transparent refresh", () => {
         refreshCalls++;
         return jsonResponse(200, {
           success: true,
-          data: { access_token: "new-access-token", refresh_token: "new-refresh-token", expires_in: 300, token_type: "Bearer" },
+          data: { access_token: "new-access-token", expires_in: 300, token_type: "Bearer" },
         });
       }
 
@@ -46,7 +46,13 @@ describe("apiFetch transparent refresh", () => {
     expect(result).toEqual({ ok: true });
     expect(refreshCalls).toBe(1);
     expect(getAccessToken()).toBe("new-access-token");
-    expect(getRefreshToken()).toBe("new-refresh-token");
+    // The refresh call must rely on the httpOnly cookie, not a JS-readable
+    // token — the client never sends a refresh_token field.
+    const refreshCall = fetchMock.mock.calls.find(([input]) =>
+      (typeof input === "string" ? input : input.toString()).endsWith("/auth/refresh")
+    );
+    expect(refreshCall?.[1]).toMatchObject({ credentials: "include" });
+    expect(JSON.parse((refreshCall?.[1] as RequestInit).body as string)).not.toHaveProperty("refresh_token");
 
     vi.unstubAllGlobals();
   });
@@ -64,7 +70,7 @@ describe("apiFetch transparent refresh", () => {
         await new Promise((r) => setTimeout(r, 10));
         return jsonResponse(200, {
           success: true,
-          data: { access_token: "new-access-token", refresh_token: "new-refresh-token", expires_in: 300, token_type: "Bearer" },
+          data: { access_token: "new-access-token", expires_in: 300, token_type: "Bearer" },
         });
       }
 
@@ -88,7 +94,7 @@ describe("apiFetch transparent refresh", () => {
     vi.unstubAllGlobals();
   });
 
-  it("clears tokens and throws when the refresh token itself is rejected", async () => {
+  it("clears the local session when the refresh cookie itself is rejected (401/403)", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.endsWith("/auth/refresh")) {
@@ -100,7 +106,48 @@ describe("apiFetch transparent refresh", () => {
 
     await expect(apiRequest("/vaults/123")).rejects.toBeInstanceOf(ApiError);
     expect(getAccessToken()).toBe("");
-    expect(getRefreshToken()).toBe("");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("preserves the local session on a transient refresh failure (5xx)", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/auth/refresh")) {
+        return jsonResponse(503, { success: false, error: { code: "UNAVAILABLE", message: "database unreachable" } });
+      }
+      return jsonResponse(401, { success: false, error: { code: "UNAUTHORIZED", message: "token expired" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    let caught: unknown;
+    try {
+      await apiRequest("/vaults/123");
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(ApiError);
+    expect((caught as ApiError).status).toBe(503);
+    // Unlike a genuine 401/403 rejection, a transient server error must not
+    // wipe the still-possibly-valid session.
+    expect(getAccessToken()).toBe("expired-access-token");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("preserves the local session when the refresh request throws (network error)", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/auth/refresh")) {
+        throw new TypeError("Failed to fetch");
+      }
+      return jsonResponse(401, { success: false, error: { code: "UNAUTHORIZED", message: "token expired" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiRequest("/vaults/123")).rejects.toBeInstanceOf(ApiError);
+    expect(getAccessToken()).toBe("expired-access-token");
 
     vi.unstubAllGlobals();
   });
