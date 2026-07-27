@@ -50,10 +50,11 @@ type SessionMetadata struct {
 
 // Tokens is the access/refresh token pair returned by VerifyAndIssue and Refresh.
 type Tokens struct {
-	AccessToken  string
-	RefreshToken string
-	ExpiresIn    int64 // seconds
-	SessionID    uuid.UUID
+	AccessToken      string
+	RefreshToken     string
+	ExpiresIn        int64 // access-token seconds
+	RefreshExpiresIn int64 // refresh-token seconds, for the handler's cookie MaxAge
+	SessionID        uuid.UUID
 }
 
 // WSSessionCloser lets the auth service force-close live WebSocket
@@ -226,10 +227,11 @@ func (s *authService) VerifyAndIssue(ctx context.Context, walletAddress, signatu
 	})
 
 	return Tokens{
-		AccessToken:  accessToken,
-		RefreshToken: rawRefresh,
-		ExpiresIn:    int64(s.config.AccessTokenExpiry().Seconds()),
-		SessionID:    sess.ID,
+		AccessToken:      accessToken,
+		RefreshToken:     rawRefresh,
+		ExpiresIn:        int64(s.config.AccessTokenExpiry().Seconds()),
+		RefreshExpiresIn: int64(s.config.RefreshTokenExpiry().Seconds()),
+		SessionID:        sess.ID,
 	}, nil
 }
 
@@ -287,10 +289,11 @@ func (s *authService) Refresh(ctx context.Context, rawRefreshToken string, meta 
 	}
 
 	return Tokens{
-		AccessToken:  accessToken,
-		RefreshToken: newRaw,
-		ExpiresIn:    int64(s.config.AccessTokenExpiry().Seconds()),
-		SessionID:    sess.ID,
+		AccessToken:      accessToken,
+		RefreshToken:     newRaw,
+		ExpiresIn:        int64(s.config.AccessTokenExpiry().Seconds()),
+		RefreshExpiresIn: int64(s.config.RefreshTokenExpiry().Seconds()),
+		SessionID:        sess.ID,
 	}, nil
 }
 

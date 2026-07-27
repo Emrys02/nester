@@ -10,11 +10,11 @@ import {
   type ReactNode,
 } from "react";
 import { useWallet } from "@/components/wallet-provider";
-import { api } from "@/lib/api/client";
+import { api, ApiError } from "@/lib/api/client";
 import {
   getAccessToken,
   getUserId as readUserId,
-  setTokens,
+  setAccessToken,
   setUserId as writeUserId,
   clearTokens,
   ACCESS_TOKEN_STORAGE_KEY,
@@ -86,15 +86,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!exp) return;
     const msUntilExpiry = exp * 1000 - Date.now();
     const delay = Math.max(msUntilExpiry - 30_000, 5_000); // refresh 30s early
-    refreshTimerRef.current = setTimeout(async () => {
+
+    const attempt = async () => {
       try {
         const refreshed = await api.auth.refresh();
         setToken(refreshed.access_token);
         scheduleProactiveRefresh(refreshed.access_token);
-      } catch {
+      } catch (err) {
+        // Only a genuine rejection of the refresh token itself (401/403 —
+        // expired, reused, revoked, device mismatch) means the session is
+        // actually over. A transient failure (network blip, 5xx) doesn't
+        // mean that, so don't force a logout over it — retry shortly and
+        // let the still-valid refresh token carry the session through.
+        const isAuthRejection = err instanceof ApiError && (err.status === 401 || err.status === 403);
+        if (!isAuthRejection) {
+          refreshTimerRef.current = setTimeout(attempt, 15_000);
+          return;
+        }
         clearSession();
       }
-    }, delay);
+    };
+
+    refreshTimerRef.current = setTimeout(attempt, delay);
   }, [clearSession]);
 
   // Clear session when wallet disconnects
@@ -161,12 +174,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const signature =
         typeof bytes === "string" ? bytes : btoa(String.fromCharCode(...bytes));
 
-      // 3. Verify and receive the access/refresh token pair
-      const { access_token, refresh_token } = await api.auth.verify(address, signature, challenge);
+      // 3. Verify and receive the access token. The refresh token is set
+      // directly as an httpOnly cookie by the server — this client never
+      // sees it.
+      const { access_token } = await api.auth.verify(address, signature, challenge);
 
-      // Persist tokens before resolving the user record so that lookup/
+      // Persist the token before resolving the user record so that lookup/
       // register call carries a valid Authorization header.
-      setTokens(access_token, refresh_token);
+      setAccessToken(access_token);
       setToken(access_token);
       scheduleProactiveRefresh(access_token);
 

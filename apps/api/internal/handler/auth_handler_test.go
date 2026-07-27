@@ -90,59 +90,98 @@ func decodeEnvelope(t *testing.T, body []byte) map[string]any {
 
 // --- tests ---
 
+func refreshRequest(deviceFingerprint, cookieValue string) *http.Request {
+	body, _ := json.Marshal(map[string]string{"device_fingerprint": deviceFingerprint})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if cookieValue != "" {
+		req.AddCookie(&http.Cookie{Name: "nester_refresh_token", Value: cookieValue})
+	}
+	return req
+}
+
 func TestAuthHandler_Refresh_ReturnsTokenEnvelope(t *testing.T) {
-	svc := &stubAuthSvc{tokens: service.Tokens{AccessToken: "access-1", RefreshToken: "refresh-1", ExpiresIn: 300, SessionID: uuid.New()}}
-	h := handler.NewAuthHandler(svc)
+	svc := &stubAuthSvc{tokens: service.Tokens{AccessToken: "access-1", RefreshToken: "refresh-2", ExpiresIn: 300, RefreshExpiresIn: 604800, SessionID: uuid.New()}}
+	h := handler.NewAuthHandler(svc, true)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	body, _ := json.Marshal(map[string]string{"refresh_token": "old-refresh", "device_fingerprint": "device-1"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	mux.ServeHTTP(rec, refreshRequest("device-1", "old-refresh"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	out := decodeEnvelope(t, rec.Body.Bytes())
 	data := out["data"].(map[string]any)
-	if data["access_token"] != "access-1" || data["refresh_token"] != "refresh-1" {
-		t.Errorf("unexpected token payload: %v", data)
+	if data["access_token"] != "access-1" {
+		t.Errorf("unexpected access token: %v", data)
+	}
+	if _, leaked := data["refresh_token"]; leaked {
+		t.Error("refresh_token must never appear in the JSON response body")
 	}
 	if data["token_type"] != "Bearer" {
 		t.Errorf("expected token_type Bearer, got %v", data["token_type"])
 	}
+
+	// The rotated refresh token must be set as an httpOnly cookie instead.
+	cookies := rec.Result().Cookies()
+	var found *http.Cookie
+	for _, c := range cookies {
+		if c.Name == "nester_refresh_token" {
+			found = c
+		}
+	}
+	if found == nil {
+		t.Fatal("expected nester_refresh_token cookie to be set")
+	}
+	if found.Value != "refresh-2" {
+		t.Errorf("cookie value = %q, want the newly-rotated refresh token", found.Value)
+	}
+	if !found.HttpOnly {
+		t.Error("refresh cookie must be HttpOnly")
+	}
+	if !found.Secure {
+		t.Error("refresh cookie must be Secure when secureCookies is true")
+	}
 }
 
-func TestAuthHandler_Refresh_MissingFields_Returns400(t *testing.T) {
+func TestAuthHandler_Refresh_MissingDeviceFingerprint_Returns400(t *testing.T) {
 	svc := &stubAuthSvc{}
-	h := handler.NewAuthHandler(svc)
+	h := handler.NewAuthHandler(svc, true)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	body, _ := json.Marshal(map[string]string{"refresh_token": "old-refresh"}) // no device_fingerprint
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	mux.ServeHTTP(rec, refreshRequest("", "old-refresh"))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
 	}
 }
 
-func TestAuthHandler_Refresh_FailureCollapsesToGenericUnauthorized(t *testing.T) {
-	svc := &stubAuthSvc{refreshErr: service.ErrRefreshFailed}
-	h := handler.NewAuthHandler(svc)
+func TestAuthHandler_Refresh_MissingCookie_Returns401(t *testing.T) {
+	svc := &stubAuthSvc{}
+	h := handler.NewAuthHandler(svc, true)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	body, _ := json.Marshal(map[string]string{"refresh_token": "reused-token", "device_fingerprint": "device-1"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	mux.ServeHTTP(rec, refreshRequest("device-1", ""))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 when no refresh cookie is present, got %d", rec.Code)
+	}
+}
+
+func TestAuthHandler_Refresh_FailureCollapsesToGenericUnauthorized(t *testing.T) {
+	svc := &stubAuthSvc{refreshErr: service.ErrRefreshFailed}
+	h := handler.NewAuthHandler(svc, true)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, refreshRequest("device-1", "reused-token"))
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rec.Code)
@@ -159,11 +198,19 @@ func TestAuthHandler_Refresh_FailureCollapsesToGenericUnauthorized(t *testing.T)
 			t.Errorf("error message leaks internal failure reason %q: %q", leaky, msg)
 		}
 	}
+
+	// The dead cookie must be cleared, not left pointing at a rejected token.
+	cookies := rec.Result().Cookies()
+	for _, c := range cookies {
+		if c.Name == "nester_refresh_token" && c.MaxAge >= 0 {
+			t.Errorf("expected refresh cookie to be cleared (MaxAge < 0), got MaxAge=%d", c.MaxAge)
+		}
+	}
 }
 
 func TestAuthHandler_Logout_RevokesCurrentSession(t *testing.T) {
 	svc := &stubAuthSvc{}
-	h := handler.NewAuthHandler(svc)
+	h := handler.NewAuthHandler(svc, true)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -179,7 +226,7 @@ func TestAuthHandler_Logout_RevokesCurrentSession(t *testing.T) {
 
 func TestAuthHandler_Logout_WithoutAuthContext_Returns401(t *testing.T) {
 	svc := &stubAuthSvc{}
-	h := handler.NewAuthHandler(svc)
+	h := handler.NewAuthHandler(svc, true)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -194,7 +241,7 @@ func TestAuthHandler_Logout_WithoutAuthContext_Returns401(t *testing.T) {
 
 func TestAuthHandler_LogoutAll_ReturnsRevokedCount(t *testing.T) {
 	svc := &stubAuthSvc{logoutAllCount: 3}
-	h := handler.NewAuthHandler(svc)
+	h := handler.NewAuthHandler(svc, true)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -222,7 +269,7 @@ func TestAuthHandler_ListSessions_MarksCurrentSession(t *testing.T) {
 		{ID: currentSessionID, UserID: userID, DeviceFingerprint: "device-a", CreatedAt: now, LastActiveAt: now, AbsoluteExpiresAt: now.Add(30 * 24 * time.Hour)},
 		{ID: otherSessionID, UserID: userID, DeviceFingerprint: "device-b", CreatedAt: now, LastActiveAt: now, AbsoluteExpiresAt: now.Add(30 * 24 * time.Hour)},
 	}}
-	h := handler.NewAuthHandler(svc)
+	h := handler.NewAuthHandler(svc, true)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -250,7 +297,7 @@ func TestAuthHandler_ListSessions_MarksCurrentSession(t *testing.T) {
 
 func TestAuthHandler_RevokeSession_NotFoundReturns404(t *testing.T) {
 	svc := &stubAuthSvc{revokeErr: session.ErrSessionNotFound}
-	h := handler.NewAuthHandler(svc)
+	h := handler.NewAuthHandler(svc, true)
 	mux := http.NewServeMux()
 	h.Register(mux)
 

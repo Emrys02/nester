@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -13,12 +14,56 @@ import (
 	"github.com/suncrestlabs/nester/apps/api/pkg/response"
 )
 
+// refreshCookieName holds the refresh token as an httpOnly cookie so it's
+// never readable by client-side JS (an XSS on the frontend can't exfiltrate
+// it). Scoped to the auth path only — no reason for it to travel on every
+// API request.
+const refreshCookieName = "nester_refresh_token"
+const refreshCookiePath = "/api/v1/auth"
+
 type AuthHandler struct {
 	authService service.AuthService
+	// secureCookies gates the Secure flag (and SameSite=None, which requires
+	// it) on the refresh cookie. False only in local development, where the
+	// frontend commonly talks to the API over plain HTTP.
+	secureCookies bool
 }
 
-func NewAuthHandler(authService service.AuthService) *AuthHandler {
-	return &AuthHandler{authService: authService}
+func NewAuthHandler(authService service.AuthService, secureCookies bool) *AuthHandler {
+	return &AuthHandler{authService: authService, secureCookies: secureCookies}
+}
+
+func (h *AuthHandler) setRefreshCookie(w http.ResponseWriter, token string, maxAge time.Duration) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     refreshCookieName,
+		Value:    token,
+		Path:     refreshCookiePath,
+		MaxAge:   int(maxAge.Seconds()),
+		HttpOnly: true,
+		Secure:   h.secureCookies,
+		SameSite: h.cookieSameSite(),
+	})
+}
+
+func (h *AuthHandler) clearRefreshCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     refreshCookieName,
+		Value:    "",
+		Path:     refreshCookiePath,
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   h.secureCookies,
+		SameSite: h.cookieSameSite(),
+	})
+}
+
+// cookieSameSite is None (cross-origin, requires Secure) once secureCookies
+// is on, else Lax for same-origin local dev over plain HTTP.
+func (h *AuthHandler) cookieSameSite() http.SameSite {
+	if h.secureCookies {
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteLaxMode
 }
 
 func (h *AuthHandler) Register(mux *http.ServeMux) {
@@ -72,19 +117,19 @@ type VerifyRequest struct {
 }
 
 // TokenResponse is the shared shape returned by /auth/verify and /auth/refresh.
+// The refresh token itself is never included here — it's set as an httpOnly
+// cookie (see setRefreshCookie) so client-side JS can't read or exfiltrate it.
 type TokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int64  `json:"expires_in"`
-	TokenType    string `json:"token_type"`
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int64  `json:"expires_in"`
+	TokenType   string `json:"token_type"`
 }
 
 func tokenResponse(t service.Tokens) TokenResponse {
 	return TokenResponse{
-		AccessToken:  t.AccessToken,
-		RefreshToken: t.RefreshToken,
-		ExpiresIn:    t.ExpiresIn,
-		TokenType:    "Bearer",
+		AccessToken: t.AccessToken,
+		ExpiresIn:   t.ExpiresIn,
+		TokenType:   "Bearer",
 	}
 }
 
@@ -114,11 +159,11 @@ func (h *AuthHandler) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.setRefreshCookie(w, tokens.RefreshToken, time.Duration(tokens.RefreshExpiresIn)*time.Second)
 	response.WriteJSON(w, http.StatusOK, response.OK(tokenResponse(tokens)))
 }
 
 type RefreshRequest struct {
-	RefreshToken      string `json:"refresh_token"`
 	DeviceFingerprint string `json:"device_fingerprint"`
 }
 
@@ -128,20 +173,29 @@ func (h *AuthHandler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, http.StatusBadRequest, response.ValidationErr("invalid request body"))
 		return
 	}
-	if req.RefreshToken == "" || req.DeviceFingerprint == "" {
-		response.WriteJSON(w, http.StatusBadRequest, response.ValidationErr("refresh_token and device_fingerprint are required"))
+	if req.DeviceFingerprint == "" {
+		response.WriteJSON(w, http.StatusBadRequest, response.ValidationErr("device_fingerprint is required"))
 		return
 	}
 
-	tokens, err := h.authService.Refresh(r.Context(), req.RefreshToken, clientMetadata(r, req.DeviceFingerprint))
-	if err != nil {
-		// Every failure mode (invalid, expired, reused, device mismatch,
-		// session revoked/expired) collapses to the same response — the
-		// distinction must not leak to the caller, only to the audit log.
+	cookie, err := r.Cookie(refreshCookieName)
+	if err != nil || cookie.Value == "" {
 		response.WriteJSON(w, http.StatusUnauthorized, response.Err(http.StatusUnauthorized, "UNAUTHORIZED", "refresh token is invalid or expired, please sign in again"))
 		return
 	}
 
+	tokens, err := h.authService.Refresh(r.Context(), cookie.Value, clientMetadata(r, req.DeviceFingerprint))
+	if err != nil {
+		// Every failure mode (invalid, expired, reused, device mismatch,
+		// session revoked/expired) collapses to the same response — the
+		// distinction must not leak to the caller, only to the audit log.
+		// Clear the dead cookie so the browser stops resending it.
+		h.clearRefreshCookie(w)
+		response.WriteJSON(w, http.StatusUnauthorized, response.Err(http.StatusUnauthorized, "UNAUTHORIZED", "refresh token is invalid or expired, please sign in again"))
+		return
+	}
+
+	h.setRefreshCookie(w, tokens.RefreshToken, time.Duration(tokens.RefreshExpiresIn)*time.Second)
 	response.WriteJSON(w, http.StatusOK, response.OK(tokenResponse(tokens)))
 }
 
@@ -154,6 +208,7 @@ func (h *AuthHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		h.writeSessionError(w, err)
 		return
 	}
+	h.clearRefreshCookie(w)
 	response.WriteJSON(w, http.StatusOK, response.OK(struct{}{}))
 }
 
@@ -179,6 +234,7 @@ func (h *AuthHandler) handleLogoutAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.clearRefreshCookie(w)
 	response.WriteJSON(w, http.StatusOK, response.OK(LogoutAllResponse{RevokedCount: count}))
 }
 
