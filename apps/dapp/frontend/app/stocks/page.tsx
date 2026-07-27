@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { AppShell } from "@/components/app-shell";
 import { useWallet } from "@/components/wallet-provider";
+import { getAccessToken } from "@/lib/auth/token-store";
 import {
     ArrowUpRight,
     ArrowDownRight,
@@ -249,12 +250,7 @@ export default function StocksPage() {
     const [errorPools, setErrorPools] = useState(false);
 
     // ── auth token helper ─────────────────────────────────────────────────────
-    // Attempt to read JWT from storage; falls back to empty string so watchlist
-    // calls silently fail and the user sees an empty list without an error.
-    const getToken = useCallback((): string => {
-        if (typeof window === "undefined") return "";
-        return localStorage.getItem("nester_token") ?? sessionStorage.getItem("nester_token") ?? "";
-    }, []);
+    const getToken = useCallback((): string => getAccessToken(), []);
 
     // ── fetch pools ───────────────────────────────────────────────────────────
     useEffect(() => {

@@ -1,12 +1,20 @@
-import config from "@/lib/config";
+import {
+  getAccessToken,
+  getRefreshToken,
+  getOrCreateDeviceFingerprint,
+  setTokens,
+  clearTokens,
+} from "@/lib/auth/token-store";
 
 /**
  * Typed API client for the Nester Go backend.
  *
- * All routes under /api/v1/ require a Bearer JWT.
- * The token is read from the auth-store (localStorage) on every request so it
- * always reflects the current login state without needing to thread it through
- * props/context.
+ * All routes under /api/v1/ require a Bearer JWT. The token is read from the
+ * canonical token store (lib/auth/token-store) on every request so it always
+ * reflects the current login state without needing to thread it through
+ * props/context. Access tokens are short-lived (minutes); a 401 triggers a
+ * single transparent refresh-and-retry so the short lifetime stays invisible
+ * to callers.
  */
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -24,9 +32,9 @@ function getApiBase(): string {
 
 const API_BASE = getApiBase();
 
+/** @deprecated import getAccessToken from "@/lib/auth/token-store" instead. */
 export function getStoredToken(): string {
-  if (typeof window === "undefined") return "";
-  return window.localStorage.getItem("nester_token") ?? "";
+  return getAccessToken();
 }
 
 export class ApiError extends Error {
@@ -46,29 +54,65 @@ type ApiEnvelope<T> = {
   error?: { code?: string; message: string };
 };
 
+// Single-flight guard: concurrent 401s share one in-flight /auth/refresh
+// call. Without this, N concurrent requests hitting a stale access token
+// would each attempt to rotate the refresh token, and the server's reuse
+// detection would treat the losers as token theft and kill the session.
+let refreshInFlight: Promise<{ access_token: string; refresh_token: string }> | null = null;
+
+async function refreshTokens(): Promise<{ access_token: string; refresh_token: string }> {
+  if (!refreshInFlight) {
+    refreshInFlight = performRefresh().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+async function performRefresh(): Promise<{ access_token: string; refresh_token: string }> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) {
+    clearTokens();
+    throw new ApiError(401, "NO_REFRESH_TOKEN", "No active session");
+  }
+
+  const res = await fetch(`${API_BASE}/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      refresh_token: refreshToken,
+      device_fingerprint: getOrCreateDeviceFingerprint(),
+    }),
+  });
+
+  const body = await res.text();
+  const json = body.trim()
+    ? (JSON.parse(body) as ApiEnvelope<{ access_token: string; refresh_token: string }>)
+    : null;
+
+  if (!res.ok || !json?.success) {
+    clearTokens();
+    throw new ApiError(
+      res.status,
+      json?.error?.code ?? "SESSION_EXPIRED",
+      json?.error?.message ?? "Session expired, please sign in again"
+    );
+  }
+
+  setTokens(json.data.access_token, json.data.refresh_token);
+  return json.data;
+}
+
 export async function apiRequest<T>(
   path: string,
   init?: RequestInit
 ): Promise<T> {
-  const token = getStoredToken();
-  const res = await fetch(`${config.apiUrl}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...init?.headers,
-    },
-  });
-  const json = (await res.json()) as ApiEnvelope<T>;
-  if (!res.ok || !json.success) {
-    throw new Error(json.error?.message ?? `API error ${res.status}`);
-  }
-  return json.data;
+  return apiFetch<T>(path, init);
 }
 
 async function apiFetch<T>(
   path: string,
-  init?: RequestInit & { skipAuth?: boolean }
+  init?: RequestInit & { skipAuth?: boolean; _isRetry?: boolean }
 ): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -76,7 +120,7 @@ async function apiFetch<T>(
   };
 
   if (!init?.skipAuth) {
-    const token = getStoredToken();
+    const token = getAccessToken();
     if (token) {
       headers["Authorization"] = `Bearer ${token}`;
     }
@@ -86,6 +130,20 @@ async function apiFetch<T>(
     ...init,
     headers,
   });
+
+  // A 401 on an authenticated request means the access token expired (it's
+  // short-lived by design) — transparently refresh once and retry, rather
+  // than surfacing a spurious failure to the caller.
+  if (res.status === 401 && !init?.skipAuth && !init?._isRetry) {
+    try {
+      await refreshTokens();
+    } catch (refreshErr) {
+      throw refreshErr instanceof ApiError
+        ? refreshErr
+        : new ApiError(401, "SESSION_EXPIRED", "Session expired, please sign in again");
+    }
+    return apiFetch<T>(path, { ...init, _isRetry: true });
+  }
 
   // Handle non-JSON or empty responses
   const body = await res.text();
@@ -227,14 +285,28 @@ export interface ChallengeResponse {
   challenge: string;
 }
 
-export interface VerifyResponse {
-  token: string;
+export interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  token_type: string;
+}
+
+export interface SessionView {
+  id: string;
+  device_fingerprint: string;
+  user_agent?: string;
+  ip_address?: string;
+  created_at: string;
+  last_active_at: string;
+  absolute_expires_at: string;
+  is_current: boolean;
 }
 
 // ── API surface ───────────────────────────────────────────────────────────────
 
 export const api = {
-  /** Challenge / verify wallet login */
+  /** Challenge / verify wallet login, session refresh + device management */
   auth: {
     requestChallenge: (walletAddress: string) =>
       apiFetch<ChallengeResponse>("/auth/challenge", {
@@ -243,16 +315,29 @@ export const api = {
         skipAuth: true,
       }),
 
-    verify: (
-      walletAddress: string,
-      signature: string,
-      challenge: string
-    ) =>
-      apiFetch<VerifyResponse>("/auth/verify", {
+    verify: (walletAddress: string, signature: string, challenge: string) =>
+      apiFetch<TokenResponse>("/auth/verify", {
         method: "POST",
-        body: JSON.stringify({ wallet_address: walletAddress, signature, challenge }),
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          signature,
+          challenge,
+          device_fingerprint: getOrCreateDeviceFingerprint(),
+        }),
         skipAuth: true,
       }),
+
+    /** Manually trigger a refresh; apiFetch already does this transparently on 401. */
+    refresh: () => refreshTokens(),
+
+    logout: () => apiFetch<void>("/auth/logout", { method: "POST" }),
+
+    logoutAll: () => apiFetch<{ revoked_count: number }>("/auth/logout-all", { method: "POST" }),
+
+    listSessions: () => apiFetch<{ sessions: SessionView[] }>("/auth/sessions"),
+
+    revokeSession: (id: string) =>
+      apiFetch<void>(`/auth/sessions/${id}`, { method: "DELETE" }),
   },
 
   /** User lookups */
