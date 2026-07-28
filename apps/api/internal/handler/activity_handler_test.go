@@ -87,14 +87,14 @@ func TestActivityHandler_List_MapsToFrontendContract(t *testing.T) {
 
 	var body struct {
 		Data []struct {
-			ID        string  `json:"id"`
-			Timestamp string  `json:"timestamp"`
-			Type      string  `json:"type"`
-			VaultName string  `json:"vaultName"`
-			Amount    float64 `json:"amount"`
-			Asset     string  `json:"asset"`
-			Status    string  `json:"status"`
-			TxHash    string  `json:"txHash"`
+			ID        string `json:"id"`
+			Timestamp string `json:"timestamp"`
+			Type      string `json:"type"`
+			VaultName string `json:"vaultName"`
+			Amount    string `json:"amount"`
+			Asset     string `json:"asset"`
+			Status    string `json:"status"`
+			TxHash    string `json:"txHash"`
 		} `json:"data"`
 		NextCursor string `json:"nextCursor"`
 		PrevCursor string `json:"prevCursor"`
@@ -113,8 +113,8 @@ func TestActivityHandler_List_MapsToFrontendContract(t *testing.T) {
 	if got.Status != "Confirmed" {
 		t.Fatalf("Status = %q, want %q", got.Status, "Confirmed")
 	}
-	if got.Amount != 123.45 {
-		t.Fatalf("Amount = %v, want 123.45", got.Amount)
+	if got.Amount != "123.45" {
+		t.Fatalf("Amount = %v, want %q", got.Amount, "123.45")
 	}
 	if got.VaultName != "USDC Vault" || got.Asset != "USDC" || got.TxHash != "txhash-1" {
 		t.Fatalf("unexpected item shape: %+v", got)

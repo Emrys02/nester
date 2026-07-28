@@ -4,9 +4,12 @@
 -- type = 'rebalance' row — every user-triggered rebalance has been failing
 -- and rolling back its whole transaction in production. Widen the
 -- constraint to include it, same pattern as migration 036.
+-- Added NOT VALID: skips the immediate full-table scan/lock so this doesn't
+-- block writes on a large table. New rows are checked immediately either
+-- way; migration 081 validates existing rows separately (cheaper lock).
 ALTER TABLE vault_transactions DROP CONSTRAINT IF EXISTS vault_transactions_type_check;
 ALTER TABLE vault_transactions ADD CONSTRAINT vault_transactions_type_check
-    CHECK (type IN ('deposit', 'withdrawal', 'harvest', 'rebalance'));
+    CHECK (type IN ('deposit', 'withdrawal', 'harvest', 'rebalance')) NOT VALID;
 
 ALTER TABLE vault_transactions ADD COLUMN IF NOT EXISTS memo TEXT;
 

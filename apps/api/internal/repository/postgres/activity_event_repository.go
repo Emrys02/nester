@@ -9,6 +9,12 @@ import (
 	"github.com/suncrestlabs/nester/apps/api/internal/domain/usersignal"
 )
 
+// maxRecentEvents bounds ListRecentEvents so a highly active user's 30-day
+// window can't force an unbounded scan/transfer — responsive-window
+// inference only needs a representative sample of recent activity hours,
+// not the full history.
+const maxRecentEvents = 500
+
 type ActivityEventRepository struct {
 	db *sql.DB
 }
@@ -31,7 +37,8 @@ func (r *ActivityEventRepository) ListRecentEvents(ctx context.Context, userID u
 		FROM activity_events
 		WHERE user_id = $1 AND occurred_at >= $2
 		ORDER BY occurred_at DESC
-	`, userID, since)
+		LIMIT $3
+	`, userID, since, maxRecentEvents)
 	if err != nil {
 		return nil, err
 	}

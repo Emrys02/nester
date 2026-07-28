@@ -164,9 +164,14 @@ func (r *ActivityRepository) List(ctx context.Context, userID uuid.UUID, filter 
 	return items, nextCursor, prevCursor, nil
 }
 
+// buildActivityWhere builds the WHERE clause applied to the activity_feed
+// CTE. $1 (userID) is NOT filtered again here — activity_feed doesn't
+// project a user_id column at all (each branch already filters by user_id =
+// $1 before the union), so an outer "user_id = $1" clause would reference a
+// nonexistent column and fail every query.
 func buildActivityWhere(userID uuid.UUID, filter activity.ListFilter) (string, []any) {
-	clauses := []string{"user_id = $1"}
-	args := []any{userID.String()}
+	clauses := []string{}
+	args := []any{userID}
 
 	if len(filter.Types) > 0 {
 		placeholders := make([]string, len(filter.Types))
@@ -197,6 +202,9 @@ func buildActivityWhere(userID uuid.UUID, filter activity.ListFilter) (string, [
 		clauses = append(clauses, fmt.Sprintf("search_vector @@ plainto_tsquery('english', $%d)", len(args)))
 	}
 
+	if len(clauses) == 0 {
+		return "TRUE", args
+	}
 	return strings.Join(clauses, " AND "), args
 }
 

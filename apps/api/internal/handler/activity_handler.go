@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -40,14 +41,18 @@ func (h *ActivityHandler) Register(mux *http.ServeMux) {
 // type/status strings and a plain numeric amount, not the internal
 // activity.Item shape or the shared response.Response envelope.
 type activityItemDTO struct {
-	ID        string  `json:"id"`
-	Timestamp string  `json:"timestamp"`
-	Type      string  `json:"type"`
-	VaultName string  `json:"vaultName"`
-	Amount    float64 `json:"amount"`
-	Asset     string  `json:"asset"`
-	Status    string  `json:"status"`
-	TxHash    string  `json:"txHash,omitempty"`
+	ID        string `json:"id"`
+	Timestamp string `json:"timestamp"`
+	Type      string `json:"type"`
+	VaultName string `json:"vaultName"`
+	// Amount is a decimal string, not a float64: the frontend contract
+	// (apps/dapp/frontend/app/dashboard/history/page.tsx) reflects this so a
+	// float64 round-trip through JSON never loses precision on financial
+	// amounts.
+	Amount string `json:"amount"`
+	Asset  string `json:"asset"`
+	Status string `json:"status"`
+	TxHash string `json:"txHash,omitempty"`
 }
 
 // activityListResponse is a deliberate, documented exception to the shared
@@ -109,7 +114,11 @@ func (h *ActivityHandler) list(w http.ResponseWriter, r *http.Request) {
 		Limit:    params.Limit,
 	})
 	if err != nil {
-		response.WriteJSON(w, http.StatusBadRequest, response.ValidationErr(err.Error()))
+		if errors.Is(err, listquery.ErrInvalidQuery) {
+			response.WriteJSON(w, http.StatusBadRequest, response.ValidationErr(err.Error()))
+			return
+		}
+		response.WriteJSON(w, http.StatusInternalServerError, response.Err(http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list activity"))
 		return
 	}
 
@@ -123,13 +132,12 @@ func (h *ActivityHandler) list(w http.ResponseWriter, r *http.Request) {
 		if !knownStatus {
 			statusLabel = string(it.Status)
 		}
-		amount, _ := it.Amount.Float64()
 		dtos[i] = activityItemDTO{
 			ID:        it.ID.String(),
 			Timestamp: it.CreatedAt.UTC().Format(time.RFC3339),
 			Type:      typeLabel,
 			VaultName: it.VaultName,
-			Amount:    amount,
+			Amount:    it.Amount.String(),
 			Asset:     it.Currency,
 			Status:    statusLabel,
 			TxHash:    it.Ref,

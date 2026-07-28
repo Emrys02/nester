@@ -249,10 +249,11 @@ func BuildWhereAndOrder(pq ParsedQuery, schema ResourceSchema, startArgIdx int) 
 			args = append(args, p.Value)
 		case OpIn:
 			vals, _ := p.Value.([]string)
+			castSuffix := sqlCastSuffix(spec.Type)
 			placeholders := make([]string, len(vals))
 			for i, v := range vals {
 				n++
-				placeholders[i] = fmt.Sprintf("$%d", n)
+				placeholders[i] = fmt.Sprintf("$%d%s", n, castSuffix)
 				args = append(args, v)
 			}
 			clauses = append(clauses, fmt.Sprintf("%s IN (%s)", spec.Column, strings.Join(placeholders, ", "))) // #nosec G201 -- spec.Column resolved only from the schema allowlist, never from client input; values are $N placeholders
