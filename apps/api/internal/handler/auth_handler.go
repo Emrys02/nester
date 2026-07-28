@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/suncrestlabs/nester/apps/api/internal/auth"
 	"github.com/suncrestlabs/nester/apps/api/internal/domain/session"
+	"github.com/suncrestlabs/nester/apps/api/internal/domain/usersignal"
 	"github.com/suncrestlabs/nester/apps/api/internal/service"
 	"github.com/suncrestlabs/nester/apps/api/pkg/response"
 )
@@ -21,16 +23,32 @@ import (
 const refreshCookieName = "nester_refresh_token"
 const refreshCookiePath = "/api/v1/auth"
 
+// ActivityRecorder is the narrow seam handleVerify needs to log a login
+// activity event; postgres.ActivityEventRepository satisfies it without
+// this package importing the postgres layer directly.
+type ActivityRecorder interface {
+	RecordEvent(ctx context.Context, userID uuid.UUID, eventType usersignal.EventType, occurredAt time.Time) error
+}
+
 type AuthHandler struct {
 	authService service.AuthService
 	// secureCookies gates the Secure flag (and SameSite=None, which requires
 	// it) on the refresh cookie. False only in local development, where the
 	// frontend commonly talks to the API over plain HTTP.
 	secureCookies bool
+	userSvc       *service.UserService
+	outcomeSvc    *service.NudgeOutcomeService
+	activityRepo  ActivityRecorder
 }
 
-func NewAuthHandler(authService service.AuthService, secureCookies bool) *AuthHandler {
-	return &AuthHandler{authService: authService, secureCookies: secureCookies}
+func NewAuthHandler(authService service.AuthService, secureCookies bool, userSvc *service.UserService, outcomeSvc *service.NudgeOutcomeService, activityRepo ActivityRecorder) *AuthHandler {
+	return &AuthHandler{
+		authService:   authService,
+		secureCookies: secureCookies,
+		userSvc:       userSvc,
+		outcomeSvc:    outcomeSvc,
+		activityRepo:  activityRepo,
+	}
 }
 
 func (h *AuthHandler) setRefreshCookie(w http.ResponseWriter, token string, maxAge time.Duration) {
@@ -114,6 +132,7 @@ type VerifyRequest struct {
 	Signature         string `json:"signature"`
 	Challenge         string `json:"challenge"`
 	DeviceFingerprint string `json:"device_fingerprint"`
+	Timezone          string `json:"timezone"`
 }
 
 // TokenResponse is the shared shape returned by /auth/verify and /auth/refresh.
@@ -157,6 +176,18 @@ func (h *AuthHandler) handleVerify(w http.ResponseWriter, r *http.Request) {
 		}
 		response.WriteJSON(w, http.StatusInternalServerError, response.Err(http.StatusInternalServerError, "INTERNAL_ERROR", "authentication failed"))
 		return
+	}
+
+	if req.Timezone != "" {
+		// Best-effort: never block login on a timezone-capture failure.
+		tz := req.Timezone
+		_, _ = h.userSvc.UpdateProfile(r.Context(), tokens.UserID, service.UpdateProfileInput{Timezone: &tz})
+	}
+	if h.outcomeSvc != nil {
+		_ = h.outcomeSvc.RecordReturnVisit(r.Context(), tokens.UserID, time.Now())
+	}
+	if h.activityRepo != nil {
+		_ = h.activityRepo.RecordEvent(r.Context(), tokens.UserID, usersignal.EventTypeLogin, time.Now())
 	}
 
 	h.setRefreshCookie(w, tokens.RefreshToken, time.Duration(tokens.RefreshExpiresIn)*time.Second)

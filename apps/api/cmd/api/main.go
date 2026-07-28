@@ -24,7 +24,9 @@ import (
 	"github.com/suncrestlabs/nester/apps/api/internal/auth"
 	"github.com/suncrestlabs/nester/apps/api/internal/config"
 	cryptopkg "github.com/suncrestlabs/nester/apps/api/internal/crypto"
+	"github.com/suncrestlabs/nester/apps/api/internal/domain/nudge"
 	"github.com/suncrestlabs/nester/apps/api/internal/domain/transaction"
+	"github.com/suncrestlabs/nester/apps/api/internal/domain/usersignal"
 	"github.com/suncrestlabs/nester/apps/api/internal/handler"
 	"github.com/suncrestlabs/nester/apps/api/internal/middleware"
 	"github.com/suncrestlabs/nester/apps/api/internal/notifications"
@@ -220,6 +222,10 @@ func run() error {
 	auditLogger := postgres.NewPostgresAuditLogger(db)
 	anomalyDetector := service.NoopAnomalyDetector{}
 
+	activityEventRepo := postgres.NewActivityEventRepository(db)
+	nudgeHistoryRepo := postgres.NewNudgeHistoryRepository(db)
+	nudgeOutcomeService := service.NewNudgeOutcomeService(nudgeHistoryRepo)
+
 	oracleService := oracle.NewRateService(cfg.Stellar().HorizonURL(), cfg.Stellar().USDCIssuer())
 	rateHandler := handler.NewRateHandler(oracleService)
 
@@ -249,7 +255,7 @@ func run() error {
 	vaultHandler.SetWSHub(wsHub)
 
 	authService := service.NewAuthService(challengeStore, userService, sessionRepository, revocationCache, anomalyDetector, auditLogger, wsHub, cfg.Auth())
-	authHandler := handler.NewAuthHandler(authService, cfg.Environment() != "development")
+	authHandler := handler.NewAuthHandler(authService, cfg.Environment() != "development", userService, nudgeOutcomeService, activityEventRepo)
 
 	performanceRepository := postgres.NewPerformanceRepository(db)
 	vaultRepository = postgres.NewVaultRepository(db)
@@ -334,6 +340,8 @@ func run() error {
 	// Background reconciliation of pending transactions: polls Horizon so a
 	// transaction's status is confirmed even when the client never calls
 	// GET /api/v1/transactions/{hash}. Broadcasts a WebSocket event on change.
+	var nudgeEngineSvc *service.NudgeEngineService
+
 	txPoller := service.NewTransactionPoller(
 		service.TransactionPollerConfig{
 			Enabled:  cfg.TransactionPoller().Enabled(),
@@ -341,8 +349,16 @@ func run() error {
 			MinAge:   cfg.TransactionPoller().MinAge(),
 		},
 		transactionService,
-		func(_ context.Context, tx transaction.Transaction) {
+		func(ctx context.Context, tx transaction.Transaction) {
 			wsHub.BroadcastEvent(transactionStatusEvent(tx))
+			if tx.Status == transaction.StatusCompleted && tx.Type == transaction.TypeDeposit {
+				if v, err := vaultRepository.GetVault(ctx, tx.VaultID); err == nil {
+					_ = nudgeOutcomeService.RecordDeposit(ctx, v.UserID, time.Now())
+					if nudgeEngineSvc != nil {
+						_ = nudgeEngineSvc.EvaluateAndDispatch(ctx, v.UserID)
+					}
+				}
+			}
 		},
 		baseLogger.WithGroup("tx-poller"),
 	)
@@ -357,7 +373,6 @@ func run() error {
 		notificationRepository,
 		nil,
 	)
-
 
 	var ready atomic.Bool
 	ready.Store(true)
@@ -447,13 +462,62 @@ func run() error {
 
 	// Savings goals
 	savingsGoalRepo := postgres.NewSavingsGoalRepository(db)
-	notificationDispatcher2 := notifications.New(
+	// Intelligence proxy (forwards to Python service)
+	intelURL := cfg.Intelligence().ServiceURL()
+	intelProxy := service.NewIntelligenceProxy(intelURL, cfg.Intelligence().Timeout())
+	prometheusClient := service.NewPrometheusClient(service.PrometheusConfig{
+		BaseURL: intelURL,
+		APIKey:  cfg.Intelligence().ServiceAPIKey(),
+		Timeout: cfg.Intelligence().Timeout(),
+	})
+
+	nudgeCopyGen := service.CompositeCopyGenerator{
+		Template: nudge.TemplateCopyGenerator{},
+		LLM:      service.LLMCopyGenerator{Client: prometheusClient},
+	}
+
+	savingsStreakRepo := postgres.NewSavingsStreakRepository(db)
+
+	// Nudges dispatch over their own push-enabled dispatcher: the shared
+	// `notificationDispatcher` above is constructed with zero channels
+	// (websocket is still disabled), so nudges need their own live channel
+	// rather than silently persisting-but-never-delivering.
+	nudgeNotificationDispatcher := notifications.New(
 		[]notifications.Channel{
 			notifications.NewPushChannel(notifications.NoopPushSender{}, notificationRepository),
 		},
 		notificationRepository,
 		nil,
 	)
+
+	nudgeEngineSvc = service.NewNudgeEngineService(
+		savingsGoalRepo,
+		savingsStreakRepo,
+		transactionRepository,
+		userRepository,
+		usersignal.HeuristicSegmentProvider{UserRepo: userRepository, GoalRepo: savingsGoalRepo},
+		usersignal.HeuristicEngagementProvider{UserRepo: userRepository},
+		usersignal.HeuristicTimingProvider{Activity: activityEventRepo, UserRepo: userRepository},
+		nudgeHistoryRepo,
+		nudgeHistoryRepo,
+		nudgeHistoryRepo,
+		nudgeCopyGen,
+		service.DispatcherNudgeNotifier{Dispatcher: nudgeNotificationDispatcher},
+	)
+
+	nudgeEngineJob := scheduler.NewNudgeEngineJob(
+		scheduler.NudgeEngineConfig{
+			Enabled:  true,
+			Interval: 1 * time.Hour,
+		},
+		savingsGoalRepo,
+		nudgeEngineSvc,
+		baseLogger.WithGroup("nudge-engine"),
+	)
+	nudgeCtx, cancelNudge := context.WithCancel(context.Background())
+	defer cancelNudge()
+	go nudgeEngineJob.Run(nudgeCtx)
+
 	webhookRepo := postgres.NewWebhookRepository(db)
 	webhookSvc := service.NewWebhookService(webhookRepo)
 	webhookHandler := handler.NewWebhookHandler(webhookSvc)
@@ -463,14 +527,14 @@ func run() error {
 		vaultRepository,
 		service.CompositeGoalMilestoneNotifier{
 			Notifiers: []service.GoalMilestoneNotifier{
-				service.DispatcherGoalMilestoneNotifier{Dispatcher: notificationDispatcher2},
+				service.NudgeEngineGoalMilestoneNotifier{NudgeEngine: nudgeEngineSvc},
 				service.WebhookGoalMilestoneNotifier{Svc: webhookSvc},
 			},
 		},
 	)
-	savingsStreakRepo := postgres.NewSavingsStreakRepository(db)
+	savingsGoalSvc.SetOutcomeRecorder(nudgeOutcomeService)
 	savingsGoalSvc.SetStreakRepository(savingsStreakRepo)
-	savingsGoalSvc.SetStreakNotifier(service.DispatcherStreakMilestoneNotifier{Dispatcher: notificationDispatcher2})
+	savingsGoalSvc.SetStreakNotifier(service.NudgeEngineStreakMilestoneNotifier{NudgeEngine: nudgeEngineSvc})
 
 	minDeposit, _ := decimal.NewFromString(cfg.RecurringDeposit().MinDepositAmount())
 	savingsScheduleRepo := postgres.NewSavingsScheduleRepository(db)
@@ -511,14 +575,6 @@ func run() error {
 	)
 	vaultHandler.SetRebalanceRateLimiter(rebalanceRateLimiter)
 
-	// Intelligence proxy (forwards to Python service)
-	intelURL := cfg.Intelligence().ServiceURL()
-	intelProxy := service.NewIntelligenceProxy(intelURL, cfg.Intelligence().Timeout())
-	prometheusClient := service.NewPrometheusClient(service.PrometheusConfig{
-		BaseURL: intelURL,
-		APIKey:  cfg.Intelligence().ServiceAPIKey(),
-		Timeout: cfg.Intelligence().Timeout(),
-	})
 	intelligenceHandler := handler.NewIntelligenceHandler(intelProxy, prometheusClient)
 	intelligenceHandler.Register(mux)
 

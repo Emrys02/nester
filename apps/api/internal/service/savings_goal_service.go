@@ -25,6 +25,10 @@ type VaultReader interface {
 	GetVault(ctx context.Context, id uuid.UUID) (vault.Vault, error)
 }
 
+type OutcomeRecorder interface {
+	RecordGoalCompletion(ctx context.Context, userID uuid.UUID, ts time.Time) error
+}
+
 type SavingsGoalService struct {
 	repo           savingsgoal.Repository
 	templateRepo   savingsgoal.TemplateRepository
@@ -32,6 +36,7 @@ type SavingsGoalService struct {
 	notifier       GoalMilestoneNotifier
 	streakRepo     savingsstreak.Repository
 	streakNotifier StreakMilestoneNotifier
+	outcomeRec     OutcomeRecorder
 }
 
 func NewSavingsGoalService(repo savingsgoal.Repository, vaultRepo VaultReader, notifier GoalMilestoneNotifier) *SavingsGoalService {
@@ -45,6 +50,11 @@ func NewSavingsGoalService(repo savingsgoal.Repository, vaultRepo VaultReader, n
 		notifier:       notifier,
 		streakNotifier: noopStreakMilestoneNotifier{},
 	}
+}
+
+// SetOutcomeRecorder attaches an outcome recorder for nudge effectiveness tracking.
+func (s *SavingsGoalService) SetOutcomeRecorder(rec OutcomeRecorder) {
+	s.outcomeRec = rec
 }
 
 // SetTemplateRepository attaches the template repository.
@@ -534,6 +544,9 @@ func (s *SavingsGoalService) EnrichProgress(ctx context.Context, goal savingsgoa
 		now := time.Now().UTC()
 		goal.CompletedAt = &now
 		goal.Status = savingsgoal.GoalStatusCompleted
+		if s.outcomeRec != nil {
+			_ = s.outcomeRec.RecordGoalCompletion(ctx, goal.UserID, now)
+		}
 	}
 
 	newMilestones := savingsgoal.DetectNewMilestones(goal.ProgressPct, goal.NotifiedMilestones)
@@ -657,6 +670,9 @@ func (s *SavingsGoalService) Complete(ctx context.Context, userID, goalID uuid.U
 	goal.CompletionAction = action
 	now := time.Now().UTC()
 	goal.CompletedAt = &now
+	if s.outcomeRec != nil {
+		_ = s.outcomeRec.RecordGoalCompletion(ctx, goal.UserID, now)
+	}
 	return s.EnrichProgress(ctx, *goal)
 }
 

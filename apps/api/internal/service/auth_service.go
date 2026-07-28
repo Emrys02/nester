@@ -55,6 +55,7 @@ type Tokens struct {
 	ExpiresIn        int64 // access-token seconds
 	RefreshExpiresIn int64 // refresh-token seconds, for the handler's cookie MaxAge
 	SessionID        uuid.UUID
+	UserID           uuid.UUID
 }
 
 // WSSessionCloser lets the auth service force-close live WebSocket
@@ -232,6 +233,7 @@ func (s *authService) VerifyAndIssue(ctx context.Context, walletAddress, signatu
 		ExpiresIn:        int64(s.config.AccessTokenExpiry().Seconds()),
 		RefreshExpiresIn: int64(s.config.RefreshTokenExpiry().Seconds()),
 		SessionID:        sess.ID,
+		UserID:           user.ID,
 	}, nil
 }
 
@@ -294,6 +296,7 @@ func (s *authService) Refresh(ctx context.Context, rawRefreshToken string, meta 
 		ExpiresIn:        int64(s.config.AccessTokenExpiry().Seconds()),
 		RefreshExpiresIn: int64(s.config.RefreshTokenExpiry().Seconds()),
 		SessionID:        sess.ID,
+		UserID:           sess.UserID,
 	}, nil
 }
 

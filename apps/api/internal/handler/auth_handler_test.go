@@ -102,7 +102,7 @@ func refreshRequest(deviceFingerprint, cookieValue string) *http.Request {
 
 func TestAuthHandler_Refresh_ReturnsTokenEnvelope(t *testing.T) {
 	svc := &stubAuthSvc{tokens: service.Tokens{AccessToken: "access-1", RefreshToken: "refresh-2", ExpiresIn: 300, RefreshExpiresIn: 604800, SessionID: uuid.New()}}
-	h := handler.NewAuthHandler(svc, true)
+	h := handler.NewAuthHandler(svc, true, nil, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -148,7 +148,7 @@ func TestAuthHandler_Refresh_ReturnsTokenEnvelope(t *testing.T) {
 
 func TestAuthHandler_Refresh_MissingDeviceFingerprint_Returns400(t *testing.T) {
 	svc := &stubAuthSvc{}
-	h := handler.NewAuthHandler(svc, true)
+	h := handler.NewAuthHandler(svc, true, nil, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -162,7 +162,7 @@ func TestAuthHandler_Refresh_MissingDeviceFingerprint_Returns400(t *testing.T) {
 
 func TestAuthHandler_Refresh_MissingCookie_Returns401(t *testing.T) {
 	svc := &stubAuthSvc{}
-	h := handler.NewAuthHandler(svc, true)
+	h := handler.NewAuthHandler(svc, true, nil, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -176,7 +176,7 @@ func TestAuthHandler_Refresh_MissingCookie_Returns401(t *testing.T) {
 
 func TestAuthHandler_Refresh_FailureCollapsesToGenericUnauthorized(t *testing.T) {
 	svc := &stubAuthSvc{refreshErr: service.ErrRefreshFailed}
-	h := handler.NewAuthHandler(svc, true)
+	h := handler.NewAuthHandler(svc, true, nil, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -210,7 +210,7 @@ func TestAuthHandler_Refresh_FailureCollapsesToGenericUnauthorized(t *testing.T)
 
 func TestAuthHandler_Logout_RevokesCurrentSession(t *testing.T) {
 	svc := &stubAuthSvc{}
-	h := handler.NewAuthHandler(svc, true)
+	h := handler.NewAuthHandler(svc, true, nil, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -226,7 +226,7 @@ func TestAuthHandler_Logout_RevokesCurrentSession(t *testing.T) {
 
 func TestAuthHandler_Logout_WithoutAuthContext_Returns401(t *testing.T) {
 	svc := &stubAuthSvc{}
-	h := handler.NewAuthHandler(svc, true)
+	h := handler.NewAuthHandler(svc, true, nil, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -241,7 +241,7 @@ func TestAuthHandler_Logout_WithoutAuthContext_Returns401(t *testing.T) {
 
 func TestAuthHandler_LogoutAll_ReturnsRevokedCount(t *testing.T) {
 	svc := &stubAuthSvc{logoutAllCount: 3}
-	h := handler.NewAuthHandler(svc, true)
+	h := handler.NewAuthHandler(svc, true, nil, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -269,7 +269,7 @@ func TestAuthHandler_ListSessions_MarksCurrentSession(t *testing.T) {
 		{ID: currentSessionID, UserID: userID, DeviceFingerprint: "device-a", CreatedAt: now, LastActiveAt: now, AbsoluteExpiresAt: now.Add(30 * 24 * time.Hour)},
 		{ID: otherSessionID, UserID: userID, DeviceFingerprint: "device-b", CreatedAt: now, LastActiveAt: now, AbsoluteExpiresAt: now.Add(30 * 24 * time.Hour)},
 	}}
-	h := handler.NewAuthHandler(svc, true)
+	h := handler.NewAuthHandler(svc, true, nil, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -297,7 +297,7 @@ func TestAuthHandler_ListSessions_MarksCurrentSession(t *testing.T) {
 
 func TestAuthHandler_RevokeSession_NotFoundReturns404(t *testing.T) {
 	svc := &stubAuthSvc{revokeErr: session.ErrSessionNotFound}
-	h := handler.NewAuthHandler(svc, true)
+	h := handler.NewAuthHandler(svc, true, nil, nil, nil)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
