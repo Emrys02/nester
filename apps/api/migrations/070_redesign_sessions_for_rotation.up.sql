@@ -3,6 +3,13 @@
 -- service, no middleware check ever referenced it) and holds no production
 -- data, so this is a clean redesign rather than an ALTER migration.
 
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM sessions LIMIT 1) THEN
+        RAISE EXCEPTION 'sessions table is not empty; refusing to drop it. This migration assumes the legacy (013) sessions table, which application code never wrote to, has no rows — verify that assumption before proceeding.';
+    END IF;
+END $$;
+
 DROP TABLE IF EXISTS sessions;
 
 CREATE TABLE sessions (

@@ -14,6 +14,7 @@ import (
 
 	"github.com/suncrestlabs/nester/apps/api/internal/auth"
 	"github.com/suncrestlabs/nester/apps/api/internal/domain/session"
+	userdomain "github.com/suncrestlabs/nester/apps/api/internal/domain/user"
 )
 
 // sep53MessagePrefix is the fixed prefix defined by SEP-53 ("Sign and Verify
@@ -168,6 +169,9 @@ func (s *authService) VerifyAndIssue(ctx context.Context, walletAddress, signatu
 
 	user, err := s.userService.GetUserByWallet(ctx, walletAddress)
 	if err != nil {
+		if !errors.Is(err, userdomain.ErrUserNotFound) {
+			return Tokens{}, err
+		}
 		user, err = s.userService.RegisterUser(ctx, walletAddress, walletAddress[:8])
 		if err != nil {
 			return Tokens{}, err
@@ -251,6 +255,20 @@ func (s *authService) Refresh(ctx context.Context, rawRefreshToken string, meta 
 		return Tokens{}, err
 	}
 
+	// Resolve identity and confirm roles are fetchable BEFORE rotating: once
+	// RotateRefreshToken succeeds the presented token is consumed, so a
+	// downstream failure (role lookup, JWT signing) must not be able to
+	// leave the client holding a dead token with no replacement.
+	var preRoles []string
+	var havePreRoles bool
+	if peeked, peekErr := s.sessionRepo.GetSessionByRefreshTokenHash(ctx, hashOpaqueToken(rawRefreshToken)); peekErr == nil {
+		preRoles, err = s.userService.GetUserRoles(ctx, peeked.UserID)
+		if err != nil {
+			return Tokens{}, err
+		}
+		havePreRoles = true
+	}
+
 	sess, _, err := s.sessionRepo.RotateRefreshToken(
 		ctx,
 		hashOpaqueToken(rawRefreshToken),
@@ -268,13 +286,20 @@ func (s *authService) Refresh(ctx context.Context, rawRefreshToken string, meta 
 			s.finalizeRevocation(ctx, sess, session.ReasonAbsoluteExpiry, meta, false)
 		case errors.Is(err, session.ErrRefreshTokenExpired):
 			s.finalizeRevocation(ctx, sess, session.ReasonRefreshExpired, meta, false)
+		case errors.Is(err, session.ErrSessionRevoked):
+			s.finalizeRevocation(ctx, sess, session.ReasonAlreadyRevoked, meta, false)
 		}
 		return Tokens{}, ErrRefreshFailed
 	}
 
-	roles, err := s.userService.GetUserRoles(ctx, sess.UserID)
-	if err != nil {
-		return Tokens{}, err
+	roles := preRoles
+	if !havePreRoles {
+		// The pre-rotation peek didn't resolve (token not found pre-rotation
+		// but somehow valid now) — fall back to fetching post-rotation.
+		roles, err = s.userService.GetUserRoles(ctx, sess.UserID)
+		if err != nil {
+			return Tokens{}, err
+		}
 	}
 
 	accessToken, err := auth.MakeJWT(auth.Claims{

@@ -86,6 +86,18 @@ func (h *Hub) Run(ctx context.Context) {
 
 		case client := <-h.register:
 			h.mu.Lock()
+			// Re-validate under the same lock CloseConnectionsForSession/User
+			// use: the authenticate-then-upgrade round trip can take long
+			// enough that a revocation lands in between, and without this
+			// recheck that connection would register after the close sweep
+			// already ran and simply never get closed.
+			if h.authenticator != nil && client.token != "" {
+				if _, _, err := h.authenticator(client.token); err != nil {
+					h.mu.Unlock()
+					client.conn.Close()
+					continue
+				}
+			}
 			h.clients[client] = true
 			h.mu.Unlock()
 
@@ -258,6 +270,7 @@ func (h *Hub) ServeWs(w http.ResponseWriter, r *http.Request) {
 		send:      make(chan Event, 256),
 		userID:    userID,
 		sessionID: sessionID,
+		token:     token,
 		subs:      make(map[string]bool),
 	}
 	client.hub.register <- client

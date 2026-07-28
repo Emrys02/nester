@@ -57,6 +57,23 @@ func (r *SessionRepository) CreateSession(ctx context.Context, s *session.Sessio
 	return rt, nil
 }
 
+// GetSessionByRefreshTokenHash is a read-only, unlocked peek — see
+// domain/session.Repository for why callers use it ahead of rotation.
+func (r *SessionRepository) GetSessionByRefreshTokenHash(ctx context.Context, tokenHash string) (*session.Session, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT s.id, s.user_id, s.wallet_address, s.device_fingerprint, s.user_agent, s.ip_address,
+		       s.created_at, s.last_active_at, s.absolute_expires_at, s.revoked_at, s.revoked_reason
+		FROM sessions s
+		JOIN refresh_tokens rt ON rt.session_id = s.id
+		WHERE rt.token_hash = $1
+	`, tokenHash)
+	sess, err := scanSession(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, session.ErrRefreshTokenInvalid
+	}
+	return sess, err
+}
+
 // RotateRefreshToken implements rotation + reuse-detection + device-binding in
 // a single transaction. See domain/session.Repository for the contract.
 func (r *SessionRepository) RotateRefreshToken(ctx context.Context, rawTokenHash, presentedFingerprint, newTokenHash string, newExpiresAt time.Time) (*session.Session, *session.RefreshToken, error) {

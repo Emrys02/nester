@@ -55,14 +55,14 @@ func (m *mockAuthUserRepository) Create(ctx context.Context, u *user.User) error
 }
 
 func (m *mockAuthUserRepository) GetByID(ctx context.Context, id uuid.UUID) (*user.User, error) {
-	return nil, errors.New("not found")
+	return nil, user.ErrUserNotFound
 }
 
 func (m *mockAuthUserRepository) GetByWalletAddress(ctx context.Context, address string) (*user.User, error) {
 	if u, ok := m.users[address]; ok {
 		return u, nil
 	}
-	return nil, errors.New("not found")
+	return nil, user.ErrUserNotFound
 }
 
 func (m *mockAuthUserRepository) GetRoles(ctx context.Context, id uuid.UUID) ([]string, error) {
@@ -203,6 +203,21 @@ func (r *fakeSessionRepository) revokeSessionLocked(sess *session.Session, reaso
 			t.RevokedReason = &trc
 		}
 	}
+}
+
+func (r *fakeSessionRepository) GetSessionByRefreshTokenHash(_ context.Context, tokenHash string) (*session.Session, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tok, ok := r.tokens[tokenHash]
+	if !ok {
+		return nil, session.ErrRefreshTokenInvalid
+	}
+	sess, ok := r.sessions[tok.SessionID]
+	if !ok {
+		return nil, session.ErrRefreshTokenInvalid
+	}
+	cp := *sess
+	return &cp, nil
 }
 
 func (r *fakeSessionRepository) GetSessionByID(_ context.Context, id uuid.UUID) (*session.Session, error) {

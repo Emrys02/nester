@@ -62,7 +62,22 @@ func (c *InMemoryRevocationCache) MarkRevoked(_ context.Context, sessionID strin
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.m[sessionID] = time.Now().Add(ttl)
+	c.evictExpiredLocked()
 	return nil
+}
+
+// evictExpiredLocked drops every entry past its TTL. Called opportunistically
+// on each write so the map doesn't grow unbounded with sessions that are
+// never looked up again via IsRevoked (which only evicts the single queried
+// key) — this is the single-instance dev/test fallback, so an O(n) sweep on
+// each MarkRevoked is fine.
+func (c *InMemoryRevocationCache) evictExpiredLocked() {
+	now := time.Now()
+	for id, expiresAt := range c.m {
+		if now.After(expiresAt) {
+			delete(c.m, id)
+		}
+	}
 }
 
 func (c *InMemoryRevocationCache) IsRevoked(_ context.Context, sessionID string) (bool, error) {

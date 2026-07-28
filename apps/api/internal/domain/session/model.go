@@ -28,6 +28,11 @@ const (
 	ReasonAbsoluteExpiry = "absolute_expiry"
 	ReasonRefreshExpired = "refresh_expired"
 	ReasonAdmin          = "admin"
+	// ReasonAlreadyRevoked marks a refresh attempt against a session that was
+	// already revoked by some other path (logout, admin, prior reuse
+	// detection) before this attempt — the finalizeRevocation call here is a
+	// re-propagation (cache/WS/audit), not a new revocation event.
+	ReasonAlreadyRevoked = "already_revoked"
 )
 
 type Session struct {
@@ -80,6 +85,14 @@ type Repository interface {
 	RotateRefreshToken(ctx context.Context, rawTokenHash, presentedFingerprint, newTokenHash string, newExpiresAt time.Time) (*Session, *RefreshToken, error)
 
 	GetSessionByID(ctx context.Context, id uuid.UUID) (*Session, error)
+
+	// GetSessionByRefreshTokenHash is a read-only peek (no locking, no
+	// rotation) used to resolve the session/user behind a presented refresh
+	// token before consuming it — so a downstream failure (e.g. role lookup)
+	// can be returned to the caller without the refresh token having already
+	// been rotated out from under them. Returns ErrRefreshTokenInvalid if no
+	// row matches, same as RotateRefreshToken.
+	GetSessionByRefreshTokenHash(ctx context.Context, tokenHash string) (*Session, error)
 	ListActiveByUser(ctx context.Context, userID uuid.UUID) ([]Session, error)
 	RevokeSession(ctx context.Context, id uuid.UUID, reason string) error
 	RevokeAllByUser(ctx context.Context, userID uuid.UUID, reason string) ([]Session, error)
