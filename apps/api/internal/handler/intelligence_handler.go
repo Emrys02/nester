@@ -33,6 +33,7 @@ func (h *IntelligenceHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/intelligence/portfolio/{userId}", h.GetPortfolioInsights)
 	mux.HandleFunc("GET /api/v1/portfolio/{user_id}/insights", h.portfolioInsightsByPath)
 	mux.HandleFunc("POST /api/v1/intelligence/savings-plan", h.CreateSavingsPlan)
+	mux.HandleFunc("POST /api/v1/intelligence/tools/{proposalId}/confirm", h.ConfirmTool)
 }
 
 func (h *IntelligenceHandler) GetVaultRecommendations(w http.ResponseWriter, r *http.Request) {
@@ -189,4 +190,34 @@ func (h *IntelligenceHandler) authorizeUserInsights(w http.ResponseWriter, r *ht
 		return false
 	}
 	return true
+}
+
+func (h *IntelligenceHandler) ConfirmTool(w http.ResponseWriter, r *http.Request) {
+	if h.proxy == nil {
+		response.WriteJSON(w, http.StatusServiceUnavailable, response.Err(http.StatusServiceUnavailable, "UNAVAILABLE", "intelligence not configured"))
+		return
+	}
+
+	status, body, err := h.proxy.ForwardJSON(r, "/intelligence/tools/"+r.PathValue("proposalId")+"/confirm")
+	if err != nil {
+		response.WriteJSON(w, http.StatusBadGateway, response.Err(http.StatusBadGateway, "UPSTREAM_ERROR", "intelligence service unavailable"))
+		return
+	}
+
+	var payload map[string]any
+	if jsonErr := json.Unmarshal(body, &payload); jsonErr != nil {
+		response.WriteJSON(w, http.StatusBadGateway, response.Err(http.StatusBadGateway, "UPSTREAM_ERROR", "invalid response from intelligence service"))
+		return
+	}
+
+	if status >= 400 {
+		message, _ := payload["detail"].(string)
+		if message == "" {
+			message = "tool confirmation failed"
+		}
+		response.WriteJSON(w, status, response.Err(status, "UPSTREAM_ERROR", message))
+		return
+	}
+
+	response.WriteJSON(w, status, response.OK(payload))
 }

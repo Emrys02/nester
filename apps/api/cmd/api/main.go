@@ -589,6 +589,11 @@ func run() error {
 	performanceSnapshotsHandler := handler.NewPerformanceSnapshotsHandler(performanceService)
 	performanceSnapshotsHandler.Register(mux)
 
+	toolAuditRepo := postgres.NewToolAuditRepository(db)
+	toolAuditSvc := service.NewToolAuditService(toolAuditRepo)
+	toolAuditHandler := handler.NewToolAuditHandler(toolAuditSvc)
+	toolAuditHandler.Register(mux)
+
 	bankHandler.Register(mux)
 	bankAccountHandler.Register(mux)
 
@@ -617,6 +622,7 @@ func run() error {
 		{PathPrefix: "/api/v1/yields/", Public: true},
 		{PathPrefix: "/api/v1/savings-goals/shared/", Public: true},
 		{PathPrefix: "/api/v1/admin/", Public: false, Role: "admin"},
+		{PathPrefix: "/api/v1/internal/", Role: "service"},
 		{PathPrefix: "/api/v1/", Public: false},
 	}
 	authenticator := middleware.Authenticate(cfg.Auth().Secret(), cfg.Auth().ServiceAPIKey(), authRules, revocationCache)

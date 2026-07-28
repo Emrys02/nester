@@ -60,7 +60,7 @@ func Authenticate(secret, serviceAPIKey string, rules []RouteRule, revocation Re
 					writeMiddlewareError(w, http.StatusUnauthorized, "X-User-Id header required for service auth")
 					return
 				}
-				user := auth.User{ID: userID, WalletAddress: "", Scopes: nil, Roles: nil}
+				user := auth.User{ID: userID, WalletAddress: "", Scopes: nil, Roles: []string{"service"}}
 				next.ServeHTTP(w, r.WithContext(auth.NewContext(r.Context(), user)))
 				return
 			}

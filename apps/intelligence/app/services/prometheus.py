@@ -274,25 +274,26 @@ one sentence. Never start a sentence with an em dash."""
 def _to_anthropic_messages(
     history: list[dict[str, str]],
 ) -> list[anthropic.types.MessageParam]:
-    """Convert conversation store format to Anthropic message params.
+    out = []
+    for msg in history:
+        content = msg["content"]
+        if isinstance(content, str) and content.startswith("[") and content.endswith("]"):
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, list):
+                    content = parsed  # type: ignore
+            except Exception:
+                pass
 
-    Conversation store uses {"role": "user"|"assistant", "content": str}.
-    Anthropic uses the same role names. Replayed user turns are re-wrapped in
-    the untrusted-content boundary tag so history replay can't smuggle
-    instructions any more than the live turn can; assistant turns are our
-    own (already leak-stripped) output and are passed through unchanged.
-    """
-    return [
-        {
+        if msg["role"] == "user":
+            if isinstance(content, str):
+                content = guardrails.wrap_user_content(content)
+
+        out.append(cast(anthropic.types.MessageParam, {
             "role": cast(Literal["user", "assistant"], msg["role"]),
-            "content": (
-                guardrails.wrap_user_content(msg["content"])
-                if msg["role"] == "user"
-                else msg["content"]
-            ),
-        }
-        for msg in history
-    ]
+            "content": content,
+        }))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -401,56 +402,251 @@ async def stream_chat(
     )
 
     client = get_client()
-    full_response = ""
-    pending = ""
-    _FLUSH_CHARS = 120
-    # Never flush the last LEAK_MARKER_MAX_LEN-1 chars: a marker could still
-    # be mid-flight across the next delta, and once a chunk is sent to the
-    # client it can't be retroactively redacted.
-    _LEAK_OVERLAP = guardrails.LEAK_MARKER_MAX_LEN - 1
+
+    import uuid
+
+    from pydantic import ValidationError
 
     try:
-        async with client.messages.stream(
-            model=settings.anthropic_model,
-            max_tokens=CHAT_MAX_TOKENS,
-            system=dynamic_system_prompt,
-            messages=messages,
-        ) as stream:
-            # Buffer output in small windows before flushing to the client so
-            # strip_system_prompt_leakage has a real chance of matching a
-            # marker even when the model emits it across several small
-            # streaming deltas. Sanitize the whole accumulated buffer each
-            # time (so a marker that started in a previously-held-back tail
-            # is still caught), emit everything but a trailing overlap
-            # window, and keep that (already-sanitized) tail for next time.
-            async for text in stream.text_stream:
-                full_response += text
-                pending += text
-                if len(pending) >= _FLUSH_CHARS + _LEAK_OVERLAP:
-                    sanitized = guardrails.strip_system_prompt_leakage(
+        from app.services.cost_governor import cost_governor as gov
+        from app.services.tool_audit_client import record_audit_event
+        from app.services.tools.registry import TOOL_REGISTRY, list_tool_schemas
+        from app.services.tools.types import ToolContext
+    except ImportError:
+        gov = None  # type: ignore
+        TOOL_REGISTRY = []
+        record_audit_event = None  # type: ignore
+
+        def list_tool_schemas() -> list[dict[str, Any]]:
+            return []
+
+    async def _audit(**kwargs: Any) -> None:
+        if record_audit_event is not None:
+            await record_audit_event(**kwargs)
+
+    rounds = 0
+    max_rounds = getattr(settings, 'max_tool_rounds', 4)
+
+    while rounds < max_rounds:
+        if gov and not gov.check_budget(user_id):
+            yield "data: Token budget exceeded. Please try again later.\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        rounds += 1
+        full_response = ""
+        pending = ""
+        _FLUSH_CHARS = 120
+        _LEAK_OVERLAP = guardrails.LEAK_MARKER_MAX_LEN - 1
+
+        try:
+            tools_arg = list_tool_schemas()
+            kwargs: dict[str, Any] = {
+                "model": settings.anthropic_model,
+                "max_tokens": CHAT_MAX_TOKENS,
+                "system": dynamic_system_prompt,
+                "messages": messages,
+            }
+            if tools_arg:
+                kwargs["tools"] = tools_arg
+                # Force one tool call per turn. The confirmation-gate logic
+                # below assumes a turn produces at most one tool_use block;
+                # Anthropic's default parallel tool use would let a turn mix
+                # e.g. a read tool with a consequential one, and there is no
+                # code path here to execute one, propose the other, and
+                # still send matched tool_results for both.
+                kwargs["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": True}
+
+            async with client.messages.stream(**kwargs) as stream:
+                async for text in stream.text_stream:
+                    full_response += text
+                    pending += text
+                    if len(pending) >= _FLUSH_CHARS + _LEAK_OVERLAP:
+                        sanitized = guardrails.strip_system_prompt_leakage(
+                            pending, request_id=request_id
+                        )
+                        emit_len = len(sanitized) - _LEAK_OVERLAP
+                        if emit_len > 0:
+                            safe_chunk = sanitized[:emit_len].replace("\n", "\\n")
+                            yield f"data: {safe_chunk}\n\n"
+                            pending = sanitized[emit_len:]
+                if pending:
+                    safe_chunk = guardrails.strip_system_prompt_leakage(
                         pending, request_id=request_id
+                    ).replace("\n", "\\n")
+                    yield f"data: {safe_chunk}\n\n"
+
+                final_msg = await stream.get_final_message()
+                if gov:
+                    gov.record_usage(
+                        user_id,
+                        final_msg.usage.input_tokens + final_msg.usage.output_tokens,
                     )
-                    emit_len = len(sanitized) - _LEAK_OVERLAP
-                    if emit_len > 0:
-                        safe_chunk = sanitized[:emit_len].replace("\n", "\\n")
-                        yield f"data: {safe_chunk}\n\n"
-                        pending = sanitized[emit_len:]
-            if pending:
-                safe_chunk = guardrails.strip_system_prompt_leakage(
-                    pending, request_id=request_id
-                ).replace("\n", "\\n")
-                yield f"data: {safe_chunk}\n\n"
 
-        clean_response = guardrails.strip_system_prompt_leakage(
-            full_response, request_id=request_id
-        )
-        conversation_store.append(user_id, "assistant", clean_response)
-        yield "data: [DONE]\n\n"
+                clean_response = guardrails.strip_system_prompt_leakage(
+                    full_response, request_id=request_id
+                )
+                if clean_response:
+                    conversation_store.append(user_id, "assistant", clean_response)
 
-    except Exception:
-        logger.exception("Anthropic streaming error for user %s", user_id)
-        yield "data: Sorry, I had trouble connecting. Please try again.\n\n"
-        yield "data: [DONE]\n\n"
+                if final_msg.stop_reason == "tool_use":
+                    blocks_dict = [b.model_dump() for b in final_msg.content]
+                    messages.append(
+                        cast(
+                            anthropic.types.MessageParam,
+                            {"role": "assistant", "content": blocks_dict}
+                        )
+                    )
+                    conversation_store.append(user_id, "assistant", json.dumps(blocks_dict))
+
+                    tool_results = []
+                    for block in final_msg.content:
+                        if block.type == "tool_use":
+                            tool = next((t for t in TOOL_REGISTRY if t.name == block.name), None)
+                            if not tool:
+                                tool_results.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": block.id,
+                                    "is_error": True,
+                                    "content": f"Tool {block.name} not found"
+                                })
+                                continue
+
+                            try:
+                                args = tool.args_model(**block.input)
+                            except ValidationError as e:
+                                await _audit(
+                                    user_id=user_id,
+                                    request_id=request_id,
+                                    conversation_id="",
+                                    tool_name=tool.name,
+                                    arguments=block.input,
+                                    consequential=tool.consequential,
+                                    status="rejected",
+                                    error_message=str(e),
+                                )
+                                tool_results.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": block.id,
+                                    "is_error": True,
+                                    "content": f"Validation error: {e}"
+                                })
+                                continue
+
+                            ctx = ToolContext(
+                                user_id=user_id,
+                                request_id=request_id,
+                                conversation_id="",
+                                authorization_header=""
+                            )
+
+                            if not tool.consequential:
+                                try:
+                                    res = await tool.handler(ctx, **args.model_dump())
+                                    await _audit(
+                                        user_id=user_id,
+                                        request_id=request_id,
+                                        conversation_id="",
+                                        tool_name=tool.name,
+                                        arguments=args.model_dump(mode="json"),
+                                        consequential=False,
+                                        status="executed",
+                                        result=res,
+                                    )
+                                    wrapped = guardrails.wrap_context_block(
+                                        f"{tool.name}_result", json.dumps(res)
+                                    )
+                                    tool_results.append({
+                                        "type": "tool_result",
+                                        "tool_use_id": block.id,
+                                        "content": wrapped
+                                    })
+                                except Exception as e:
+                                    await _audit(
+                                        user_id=user_id,
+                                        request_id=request_id,
+                                        conversation_id="",
+                                        tool_name=tool.name,
+                                        arguments=args.model_dump(mode="json"),
+                                        consequential=False,
+                                        status="failed",
+                                        error_message=str(e),
+                                    )
+                                    tool_results.append({
+                                        "type": "tool_result",
+                                        "tool_use_id": block.id,
+                                        "is_error": True,
+                                        "content": str(e)
+                                    })
+                            else:
+                                proposal_id = str(uuid.uuid4())
+                                if tool.confirmation_template:
+                                    confirmation_text = tool.confirmation_template(
+                                        args.model_dump(mode="json")
+                                    )
+                                else:
+                                    confirmation_text = (
+                                        "Are you sure you want to perform this action?"
+                                    )
+
+                                pending_action = {
+                                    "proposal_id": proposal_id,
+                                    "user_id": user_id,
+                                    "conversation_id": "",
+                                    "request_id": request_id,
+                                    "tool_use_id": block.id,
+                                    "tool_name": tool.name,
+                                    "arguments": args.model_dump(mode="json"),
+                                }
+
+                                await _audit(
+                                    user_id=user_id,
+                                    request_id=request_id,
+                                    conversation_id="",
+                                    tool_name=tool.name,
+                                    arguments=pending_action["arguments"],
+                                    consequential=True,
+                                    status="proposed",
+                                )
+
+                                r = _get_redis()
+                                if r:
+                                    r.setex(
+                                        f"pending_action:{proposal_id}",
+                                        900,
+                                        json.dumps(pending_action),
+                                    )
+
+                                pending_evt = {
+                                    "proposal_id": proposal_id,
+                                    "text": confirmation_text
+                                }
+                                pending_payload = json.dumps(pending_evt)
+                                yield f"event: pending_confirmation\ndata: {pending_payload}\n\n"
+                                yield "data: [DONE]\n\n"
+                                return
+
+                    messages.append(
+                        cast(
+                            anthropic.types.MessageParam,
+                            {"role": "user", "content": tool_results}
+                        )
+                    )
+                    conversation_store.append(user_id, "user", json.dumps(tool_results))
+                    continue
+
+                else:
+                    yield "data: [DONE]\n\n"
+                    return
+
+        except Exception:
+            logger.exception("Anthropic streaming error for user %s", user_id)
+            yield "data: Sorry, I had trouble connecting. Please try again.\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+    yield "data: Task requires too many steps, please break it down.\n\n"
+    yield "data: [DONE]\n\n"
 
 
 # ---------------------------------------------------------------------------
