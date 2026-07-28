@@ -37,7 +37,7 @@ type toolInvocationForHash struct {
 	CreatedAt      int64           `json:"created_at"` // Unix timestamp
 }
 
-func (t *ToolInvocation) ComputeHash(prevHash string) string {
+func (t *ToolInvocation) ComputeHash(prevHash string) (string, error) {
 	forHash := toolInvocationForHash{
 		ID:             t.ID,
 		UserID:         t.UserID,
@@ -52,11 +52,14 @@ func (t *ToolInvocation) ComputeHash(prevHash string) string {
 		CreatedAt:      t.CreatedAt.Unix(),
 	}
 
-	b, _ := json.Marshal(forHash)
-	
+	b, err := json.Marshal(forHash)
+	if err != nil {
+		return "", err
+	}
+
 	h := sha256.New()
 	h.Write([]byte(prevHash))
 	h.Write(b)
-	
-	return hex.EncodeToString(h.Sum(nil))
+
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

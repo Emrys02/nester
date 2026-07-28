@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,17 +25,16 @@ func (m *mockToolAuditRepo) InsertChained(ctx context.Context, inv toolaudit.Too
 		return toolaudit.ToolInvocation{}, m.insertErr
 	}
 	inv.PrevHash = m.latestHash
-	inv.EntryHash = inv.ComputeHash(m.latestHash)
+	var err error
+	inv.EntryHash, err = inv.ComputeHash(m.latestHash)
+	if err != nil {
+		return toolaudit.ToolInvocation{}, err
+	}
 	m.inserted = &inv
 	return inv, nil
 }
 
 func TestToolAuditService_Record(t *testing.T) {
-	repo := &mockToolAuditRepo{
-		latestHash: "genesis-hash",
-	}
-	svc := service.NewToolAuditService(repo)
-
 	input := toolaudit.ToolInvocation{
 		UserID:         "user-1",
 		RequestID:      "req-1",
@@ -43,13 +43,44 @@ func TestToolAuditService_Record(t *testing.T) {
 		Arguments:      []byte(`{"foo":"bar"}`),
 	}
 
-	result, err := svc.Record(context.Background(), input)
+	tests := []struct {
+		name    string
+		repo    *mockToolAuditRepo
+		wantErr error
+	}{
+		{
+			name: "success",
+			repo: &mockToolAuditRepo{latestHash: "genesis-hash"},
+		},
+		{
+			name:    "latest hash retrieval failure",
+			repo:    &mockToolAuditRepo{latestErr: errors.New("db: read latest hash failed")},
+			wantErr: errors.New("db: read latest hash failed"),
+		},
+		{
+			name:    "insert failure",
+			repo:    &mockToolAuditRepo{latestHash: "genesis-hash", insertErr: errors.New("db: insert failed")},
+			wantErr: errors.New("db: insert failed"),
+		},
+	}
 
-	assert.NoError(t, err)
-	assert.NotEmpty(t, result.ID)
-	assert.False(t, result.CreatedAt.IsZero())
-	assert.Equal(t, "genesis-hash", result.PrevHash)
-	assert.NotEmpty(t, result.EntryHash)
-	
-	assert.Equal(t, result, *repo.inserted)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := service.NewToolAuditService(tt.repo)
+
+			result, err := svc.Record(context.Background(), input)
+
+			if tt.wantErr != nil {
+				assert.EqualError(t, err, tt.wantErr.Error())
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotEmpty(t, result.ID)
+			assert.False(t, result.CreatedAt.IsZero())
+			assert.Equal(t, "genesis-hash", result.PrevHash)
+			assert.NotEmpty(t, result.EntryHash)
+			assert.Equal(t, result, *tt.repo.inserted)
+		})
+	}
 }

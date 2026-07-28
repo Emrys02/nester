@@ -53,7 +53,10 @@ func (r *ToolAuditRepository) InsertChained(ctx context.Context, inv toolaudit.T
 	}
 
 	inv.PrevHash = prevHash
-	inv.EntryHash = inv.ComputeHash(prevHash)
+	inv.EntryHash, err = inv.ComputeHash(prevHash)
+	if err != nil {
+		return toolaudit.ToolInvocation{}, err
+	}
 
 	argsBytes, err := json.Marshal(inv.Arguments)
 	if err != nil {

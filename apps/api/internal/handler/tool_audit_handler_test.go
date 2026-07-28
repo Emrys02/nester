@@ -34,7 +34,11 @@ func (m *mockToolAuditRepo) InsertChained(ctx context.Context, inv toolaudit.Too
 		return toolaudit.ToolInvocation{}, m.insertErr
 	}
 	inv.PrevHash = m.latestHash
-	inv.EntryHash = inv.ComputeHash(m.latestHash)
+	var err error
+	inv.EntryHash, err = inv.ComputeHash(m.latestHash)
+	if err != nil {
+		return toolaudit.ToolInvocation{}, err
+	}
 	return inv, nil
 }
 
