@@ -413,13 +413,13 @@ async def stream_chat(
         from app.services.tools.types import ToolContext
     except ImportError:
         gov = None  # type: ignore
-        TOOL_REGISTRY = []  # type: ignore
+        TOOL_REGISTRY = []
         record_audit_event = None  # type: ignore
 
-        def list_tool_schemas() -> list[dict[str, Any]]:  # type: ignore
+        def list_tool_schemas() -> list[dict[str, Any]]:
             return []
 
-    async def _audit(**kwargs) -> None:
+    async def _audit(**kwargs: Any) -> None:
         if record_audit_event is not None:
             await record_audit_event(**kwargs)
 
