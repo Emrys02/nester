@@ -1,0 +1,1 @@
+ALTER TABLE nudge_outcomes DROP CONSTRAINT IF EXISTS nudge_outcomes_dispatch_type_unique;

@@ -25,16 +25,19 @@ func (p HeuristicSegmentProvider) DeriveSegment(ctx context.Context, userID uuid
 		return SegmentNewUser, err
 	}
 
+	if u.Tier == "premium" || u.Tier == "vip" {
+		return SegmentHighValue, nil
+	}
+
 	var goals []savingsgoal.SavingsGoal
 	if p.GoalRepo != nil {
-		goals, _ = p.GoalRepo.ListByUser(ctx, userID, "", "")
+		goals, err = p.GoalRepo.ListByUser(ctx, userID, "", "")
+		if err != nil {
+			return SegmentNewUser, err
+		}
 	}
 	if len(goals) == 0 {
 		return SegmentNewUser, nil
-	}
-
-	if u.Tier == "premium" || u.Tier == "vip" {
-		return SegmentHighValue, nil
 	}
 
 	if u.LastLoginAt == nil {

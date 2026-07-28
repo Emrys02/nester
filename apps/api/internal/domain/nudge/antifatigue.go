@@ -25,8 +25,8 @@ func EffectiveCap(base Cap, tier usersignal.EngagementTier) Cap {
 	case usersignal.TierDormant:
 		return Cap{
 			MaxPerDay:       1,
-			MaxPerWeek:      1, // the issue said "1 per 14 days" for dormant, so we might need a MaxPer14Days but let's just hack MaxPerWeek=0 maybe?
-			MinSpacingHours: 14 * 24, // 14 days minimum spacing effectively limits to 1 per 14 days
+			MaxPerWeek:      1, // redundant given MinSpacingHours below, which is what actually enforces the "1 per 14 days" cap
+			MinSpacingHours: 14 * 24,
 		}
 	default:
 		return base

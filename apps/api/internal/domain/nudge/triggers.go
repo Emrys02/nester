@@ -46,6 +46,9 @@ func goalFacts(goal savingsgoal.SavingsGoal) Facts {
 // week. This is distinct from EvaluateStreakMilestoneCandidate below, which
 // celebrates a streak week that was just hit.
 func EvaluateStreakProtectionTrigger(userID uuid.UUID, lastDeposit time.Time, now time.Time, streakWeeks int) (bool, Facts) {
+	if lastDeposit.IsZero() {
+		return false, Facts{}
+	}
 	daysSinceDeposit := now.Sub(lastDeposit).Hours() / 24
 	if daysSinceDeposit >= 6 && streakWeeks > 0 {
 		return true, Facts{StreakWeeks: streakWeeks}

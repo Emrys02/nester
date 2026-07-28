@@ -1,1 +1,1 @@
-ALTER TABLE notification_preferences DROP COLUMN nudges_enabled;
+ALTER TABLE notification_preferences DROP COLUMN IF EXISTS nudges_enabled;

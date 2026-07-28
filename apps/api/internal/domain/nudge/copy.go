@@ -2,8 +2,8 @@ package nudge
 
 import (
 	"bytes"
-	"text/template"
 	"fmt"
+	"text/template"
 )
 
 type TemplateCopyGenerator struct{}
@@ -30,6 +30,12 @@ func (g TemplateCopyGenerator) Generate(nudgeType NudgeType, facts Facts) (strin
 	case NudgeTypePaydayDeposit:
 		titleTmpl = "Good time to save?"
 		bodyTmpl = "If you got paid recently, put a little toward {{.GoalName}} while it's fresh."
+	case NudgeTypeYieldOpportunity:
+		titleTmpl = "A better yield may be available"
+		bodyTmpl = "One of your vaults could be earning more right now. Take a look at today's rates."
+	case NudgeTypeReEngagement:
+		titleTmpl = "We miss you!"
+		bodyTmpl = "Your savings are still here whenever you're ready to pick back up."
 	default:
 		titleTmpl = "A quick update"
 		bodyTmpl = "Log in to check your latest savings."

@@ -2,6 +2,7 @@ package nudge
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -84,13 +85,10 @@ func Rank(candidates []Candidate, segment usersignal.Segment, engagement usersig
 		})
 	}
 
-	// Sort by score descending
-	for i := 0; i < len(ranked)-1; i++ {
-		for j := i + 1; j < len(ranked); j++ {
-			if ranked[j].Score > ranked[i].Score {
-				ranked[i], ranked[j] = ranked[j], ranked[i]
-			}
-		}
-	}
+	// Sort by score descending, stable so equal-score candidates keep their
+	// original relative order.
+	sort.SliceStable(ranked, func(i, j int) bool {
+		return ranked[i].Score > ranked[j].Score
+	})
 	return ranked
 }

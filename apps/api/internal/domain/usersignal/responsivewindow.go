@@ -37,13 +37,9 @@ func InferResponsiveWindow(events []ActivityEvent, timezone string) ResponsiveWi
 	}
 
 	bestHour, bestCount := -1, -1
-	bestBadHour, bestBadCount := -1, -1
-	for h, c := range hourCounts {
-		if isBadHour(h) {
-			if c > bestBadCount {
-				bestBadCount = c
-				bestBadHour = h
-			}
+	for h := 0; h < 24; h++ {
+		c, ok := hourCounts[h]
+		if !ok || isBadHour(h) {
 			continue
 		}
 		if c > bestCount {
@@ -57,7 +53,6 @@ func InferResponsiveWindow(events []ActivityEvent, timezone string) ResponsiveWi
 	}
 	// Every observed activity hour was a bad hour — fall back to a safe
 	// default rather than scheduling into the night.
-	_ = bestBadHour
 	return ResponsiveWindow{HourOfDay: 12, Timezone: timezone}
 }
 

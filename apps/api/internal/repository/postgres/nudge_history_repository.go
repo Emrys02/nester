@@ -37,6 +37,9 @@ func (r *NudgeHistoryRepository) GetRecentDispatches(ctx context.Context, userID
 		}
 		logs = append(logs, l)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return logs, nil
 }
 
@@ -55,16 +58,16 @@ func (r *NudgeHistoryRepository) GetEffectivenessStats(ctx context.Context, nudg
 	// For the sake of the MVP test, let's just return a stub.
 	var sent, converted int
 	err := r.db.QueryRowContext(ctx, `
-		SELECT count(*), count(o.id)
+		SELECT count(DISTINCT d.id), count(DISTINCT o.dispatch_id)
 		FROM nudge_dispatch_log d
 		LEFT JOIN nudge_outcomes o ON o.dispatch_id = d.id
 		WHERE d.nudge_type = $1 AND d.segment = $2
 	`, nudgeType, segment).Scan(&sent, &converted)
-	
+
 	if err != nil || sent == 0 {
 		return nudge.EffectivenessStats{ConversionRate: 1.0}, nil // Cold start safe
 	}
-	
+
 	return nudge.EffectivenessStats{ConversionRate: float64(converted) / float64(sent)}, nil
 }
 
@@ -109,7 +112,7 @@ func (r *NudgeHistoryRepository) RecordOutcome(ctx context.Context, userID uuid.
 		WHERE d.user_id = $1 AND o.id IS NULL AND d.sent_at >= $3
 		ORDER BY d.sent_at DESC LIMIT 1
 	`, userID, outcomeType, occurredAt.Add(-72*time.Hour))
-	
+
 	var dispatchID uuid.UUID
 	var sentAt time.Time
 	if err := row.Scan(&dispatchID, &sentAt); err != nil {
@@ -123,6 +126,7 @@ func (r *NudgeHistoryRepository) RecordOutcome(ctx context.Context, userID uuid.
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO nudge_outcomes (id, dispatch_id, outcome_type, occurred_at, hours_after_dispatch)
 		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (dispatch_id, outcome_type) DO NOTHING
 	`, uuid.New(), dispatchID, outcomeType, occurredAt, hoursAfter)
 	return err
 }
