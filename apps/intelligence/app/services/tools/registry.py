@@ -6,10 +6,16 @@ from .types import Tool
 
 TOOL_REGISTRY: List[Tool] = READ_TOOLS + ACTION_TOOLS
 
-for tool in TOOL_REGISTRY:
-    # Assertion that no tool targets an /admin/ path
-    # (Since URLs are inside handlers, we do a basic check on name/desc)
-    assert "admin" not in tool.name.lower(), f"Tool {tool.name} appears to be an admin tool"
+
+def _validate_registry(registry: List[Tool]) -> None:
+    # Runs unconditionally (not `assert`, which -O strips) so an admin-named
+    # tool can never slip into the registry regardless of optimization flags.
+    for tool in registry:
+        if "admin" in tool.name.lower():
+            raise RuntimeError(f"Tool {tool.name} appears to be an admin tool")
+
+
+_validate_registry(TOOL_REGISTRY)
 
 def list_tool_schemas() -> List[Dict[str, Any]]:
     schemas = []

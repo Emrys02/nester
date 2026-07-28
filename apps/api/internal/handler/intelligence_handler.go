@@ -1,13 +1,14 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/suncrestlabs/nester/apps/api/internal/domain/intelligence"
 	"github.com/google/uuid"
 	"github.com/suncrestlabs/nester/apps/api/internal/auth"
+	"github.com/suncrestlabs/nester/apps/api/internal/domain/intelligence"
 	"github.com/suncrestlabs/nester/apps/api/internal/service"
 	logpkg "github.com/suncrestlabs/nester/apps/api/pkg/logger"
 	"github.com/suncrestlabs/nester/apps/api/pkg/response"
@@ -232,16 +233,30 @@ func (h *IntelligenceHandler) ConfirmTool(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	status, body, err := h.proxy.ForwardJSON(r, "/intelligence/tools/"+r.PathValue("proposalId")+"/confirm")
+	proposalID, err := uuid.Parse(r.PathValue("proposalId"))
+	if err != nil {
+		response.WriteJSON(w, http.StatusBadRequest, response.ValidationErr("invalid proposal id"))
+		return
+	}
+
+	status, body, err := h.proxy.ForwardJSON(r, "/intelligence/tools/"+proposalID.String()+"/confirm")
 	if err != nil {
 		response.WriteJSON(w, http.StatusBadGateway, response.Err(http.StatusBadGateway, "UPSTREAM_ERROR", "intelligence service unavailable"))
 		return
 	}
 
 	var payload map[string]any
-	if jsonErr := json.Unmarshal(body, &payload); jsonErr != nil {
-		response.WriteJSON(w, http.StatusBadGateway, response.Err(http.StatusBadGateway, "UPSTREAM_ERROR", "invalid response from intelligence service"))
-		return
+	if len(bytes.TrimSpace(body)) > 0 {
+		if jsonErr := json.Unmarshal(body, &payload); jsonErr != nil {
+			if status >= 400 {
+				response.WriteJSON(w, http.StatusBadGateway, response.Err(http.StatusBadGateway, "UPSTREAM_ERROR", "invalid response from intelligence service"))
+				return
+			}
+			// Successful upstream status with a non-JSON body: nothing to
+			// decode, but the confirmation itself succeeded.
+			response.WriteJSON(w, status, response.OK(map[string]any{}))
+			return
+		}
 	}
 
 	if status >= 400 {

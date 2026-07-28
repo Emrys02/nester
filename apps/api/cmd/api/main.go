@@ -271,7 +271,9 @@ func run() error {
 			return "", "", fmt.Errorf("invalid token: %w", err)
 		}
 		if claims.SessionID != "" {
-			revoked, err := revocationCache.IsRevoked(context.Background(), claims.SessionID)
+			revCtx, revCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			revoked, err := revocationCache.IsRevoked(revCtx, claims.SessionID)
+			revCancel()
 			if err != nil {
 				return "", "", fmt.Errorf("session verification unavailable: %w", err)
 			}

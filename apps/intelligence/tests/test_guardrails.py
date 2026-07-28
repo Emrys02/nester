@@ -257,6 +257,9 @@ async def test_stream_chat_allows_benign_message(monkeypatch):
     ]
     joined = "".join(chunks)
     assert guardrails.REFUSAL_MESSAGE not in joined
+    # Proves the Claude call was actually reached: _NeverCalledClient raises,
+    # and stream_chat's except-Exception handler emits this fallback chunk.
+    assert "Sorry, I had trouble connecting. Please try again." in joined
 
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -11,6 +12,11 @@ import (
 )
 
 var errIntelligenceNotConfigured = errors.New("intelligence service not configured")
+
+// maxUpstreamBodyBytes bounds ForwardJSON's io.ReadAll so a misbehaving or
+// compromised intelligence service can't force unbounded memory growth in
+// the Go API process.
+const maxUpstreamBodyBytes = 10 << 20 // 10MB
 
 // IntelligenceProxy forwards authenticated requests to the Python intelligence service.
 type IntelligenceProxy struct {
@@ -87,18 +93,25 @@ func (p *IntelligenceProxy) ForwardJSON(r *http.Request, upstreamPath string) (i
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamBodyBytes+1))
 	if err != nil {
 		return 0, nil, err
+	}
+	if len(respBody) > maxUpstreamBodyBytes {
+		return 0, nil, fmt.Errorf("upstream response exceeds %d bytes", maxUpstreamBodyBytes)
 	}
 	return resp.StatusCode, respBody, nil
 }
 
 func (p *IntelligenceProxy) buildUpstreamRequest(r *http.Request, upstreamPath string) (*http.Request, error) {
-	target, err := url.Parse(p.baseURL + upstreamPath)
+	base, err := url.Parse(p.baseURL)
 	if err != nil {
 		return nil, err
 	}
+	// JoinPath cleans ./ and ../ segments out of the result, so a client-
+	// controlled path element (e.g. a proposal ID) can't escape baseURL's
+	// path prefix via traversal.
+	target := base.JoinPath(upstreamPath)
 	if r.URL.RawQuery != "" {
 		target.RawQuery = r.URL.RawQuery
 	}

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from pydantic import BaseModel
 
@@ -18,5 +18,5 @@ class Tool:
     description: str
     args_model: type[BaseModel]
     consequential: bool
-    handler: Callable[..., Any]
+    handler: Callable[..., Awaitable[Any]]
     confirmation_template: Optional[Callable[..., str]] = None
